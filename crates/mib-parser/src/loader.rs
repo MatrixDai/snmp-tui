@@ -11,20 +11,47 @@ use crate::tree::OidTree;
 /// Load MIB files from the given paths and return a unified OID tree.
 ///
 /// This is the main public API for the parser. It:
-/// 1. Reads and parses each file
+/// 1. Reads and parses each file (skipping files that fail to parse)
 /// 2. Resolves IMPORTS across modules
 /// 3. Resolves symbolic OID references to numeric OIDs
 /// 4. Inserts all objects into the OID tree
 pub fn load_mibs(paths: &[PathBuf]) -> Result<OidTree, ParseError> {
-    let mut all_modules = Vec::new();
+    let (all_modules, warnings) = load_mibs_tolerant(paths);
 
-    for path in paths {
-        let source = std::fs::read_to_string(path)?;
-        let modules = parse_mib_raw(&source)?;
-        all_modules.extend(modules);
+    for warning in &warnings {
+        eprintln!("Warning: {}", warning);
     }
 
     build_tree_from_modules(&all_modules)
+}
+
+/// Load MIB files tolerantly, returning parsed modules and any warnings.
+/// Files that fail to parse are skipped with a warning instead of aborting.
+fn load_mibs_tolerant(paths: &[PathBuf]) -> (Vec<RawParsedModule>, Vec<String>) {
+    let mut all_modules = Vec::new();
+    let mut warnings = Vec::new();
+
+    for path in paths {
+        let source = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                warnings.push(format!("Failed to read {}: {}", path.display(), e));
+                continue;
+            }
+        };
+        match parse_mib_raw(&source) {
+            Ok(modules) => all_modules.extend(modules),
+            Err(e) => {
+                warnings.push(format!(
+                    "Skipping {} (parse error): {}",
+                    path.display(),
+                    e
+                ));
+            }
+        }
+    }
+
+    (all_modules, warnings)
 }
 
 /// Load MIBs from source strings (useful for embedded/bundled MIBs).
