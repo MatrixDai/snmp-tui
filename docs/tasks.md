@@ -35,17 +35,17 @@ Ordered task breakdown for building snmp-cat. Each milestone groups related task
 
 > Depends on: Milestone 1 (shared types)
 
-- [ ] **3.1** Add `snmp2` and `tokio` dependencies; define `SnmpConfig` struct (host, port, version, community, timeout, retries, v3 credentials)
-- [ ] **3.2** Implement async `SnmpSession` wrapper — connect/create session from `SnmpConfig`
-- [ ] **3.3** Implement GET operation — `get(oid: &Oid) -> Result<SnmpValue>`
-- [ ] **3.4** Implement GETNEXT operation — `get_next(oid: &Oid) -> Result<(Oid, SnmpValue)>`
-- [ ] **3.5** Implement GETBULK operation — `get_bulk(oid: &Oid, max_repetitions: u32) -> Result<Vec<(Oid, SnmpValue)>>`
-- [ ] **3.6** Implement WALK — iterative GETNEXT (v1) or GETBULK (v2c/v3) that yields results until OID leaves the requested subtree
-- [ ] **3.7** Implement SET operation — `set(oid: &Oid, value: SnmpValue) -> Result<()>` with typed value variants (Integer, OctetString, IpAddress, Counter, Gauge, TimeTicks, ObjectIdentifier)
-- [ ] **3.8** Implement SNMPv3 USM support — auth protocols (MD5, SHA), privacy protocols (DES, AES)
-- [ ] **3.9** Define channel types: `SnmpRequest` enum (Get, GetNext, GetBulk, Walk, Set) and `SnmpResponse` struct (operation type, oid, result/error) for use by the TUI event loop
-- [ ] **3.10** Implement background task runner — spawns on a tokio runtime, receives `SnmpRequest` via `mpsc::Receiver`, sends `SnmpResponse` back via `mpsc::Sender`
-- [ ] **3.11** Integration tests — test against a local `snmpd` or mock; verify GET/WALK/SET round-trips and error handling (timeout, noSuchObject, auth failure)
+- [x] **3.1** Add `snmp2` and `tokio` dependencies; define `SnmpConfig` struct (host, port, version, community, timeout, retries, v3 credentials)
+- [x] **3.2** Implement async `SnmpSession` wrapper — connect/create session from `SnmpConfig`
+- [x] **3.3** Implement GET operation — `get(oid: &Oid) -> Result<SnmpValue>`
+- [x] **3.4** Implement GETNEXT operation — `get_next(oid: &Oid) -> Result<(Oid, SnmpValue)>`
+- [x] **3.5** Implement GETBULK operation — `get_bulk(oid: &Oid, max_repetitions: u32) -> Result<Vec<(Oid, SnmpValue)>>`
+- [x] **3.6** Implement WALK — iterative GETNEXT (v1) or GETBULK (v2c/v3) that yields results until OID leaves the requested subtree
+- [x] **3.7** Implement SET operation — `set(oid: &Oid, value: SnmpValue) -> Result<()>` with typed value variants (Integer, OctetString, IpAddress, Counter, Gauge, TimeTicks, ObjectIdentifier)
+- [x] **3.8** Implement SNMPv3 USM support — auth protocols (MD5, SHA), privacy protocols (DES, AES)
+- [x] **3.9** Define channel types: `SnmpRequest` enum (Get, GetNext, GetBulk, Walk, Set) and `SnmpResponse` struct (operation type, oid, result/error) for use by the TUI event loop
+- [x] **3.10** Implement background task runner — spawns on a tokio runtime, receives `SnmpRequest` via `mpsc::Receiver`, sends `SnmpResponse` back via `mpsc::Sender`
+- [x] **3.11** Integration tests — test against a local `snmpd` or mock; verify GET/WALK/SET round-trips and error handling (timeout, noSuchObject, auth failure)
 
 ---
 

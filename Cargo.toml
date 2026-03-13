@@ -17,10 +17,10 @@ pest = "2"
 pest_derive = "2"
 
 # SNMP
-snmp2 = "0.5"
+snmp2 = { version = "0.5", features = ["v3", "heap_buffers"] }
 
 # Async
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 
 # TUI
 ratatui = "0.30"
