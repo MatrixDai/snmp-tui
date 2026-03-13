@@ -151,6 +151,21 @@ impl OidTree {
     pub fn is_empty(&self) -> bool {
         self.nodes.len() <= 1
     }
+
+    /// Sort all children vectors by subid for consistent traversal order.
+    /// Should be called once after all insertions are complete.
+    pub fn sort_children(&mut self) {
+        for i in 0..self.nodes.len() {
+            let mut children = std::mem::take(&mut self.nodes[i].children);
+            children.sort_by_key(|&idx| self.nodes[idx.0].subid);
+            self.nodes[i].children = children;
+        }
+    }
+
+    /// Return the total number of nodes in the arena (for iteration).
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
 }
 
 #[cfg(test)]
@@ -197,6 +212,37 @@ mod tests {
         let tree = OidTree::new();
         assert!(tree.is_empty());
         assert_eq!(tree.len(), 1); // root node
+    }
+
+    #[test]
+    fn sort_children_by_subid() {
+        let mut tree = OidTree::new();
+        // Insert out of order: 1.3.6.1, then 1.3.6.4, then 1.3.6.2
+        tree.insert(&Oid::new(vec![1, 3, 6, 1]), "internet");
+        tree.insert(&Oid::new(vec![1, 3, 6, 4]), "private");
+        tree.insert(&Oid::new(vec![1, 3, 6, 2]), "mgmt");
+
+        // Before sorting, children of 1.3.6 are in insertion order
+        let dod_idx = tree.lookup(&Oid::new(vec![1, 3, 6])).unwrap();
+        let children_before: Vec<u32> = tree
+            .get(dod_idx)
+            .unwrap()
+            .children
+            .iter()
+            .map(|&idx| tree.get(idx).unwrap().subid)
+            .collect();
+        assert_eq!(children_before, vec![1, 4, 2]);
+
+        // After sorting, children should be by subid
+        tree.sort_children();
+        let children_after: Vec<u32> = tree
+            .get(dod_idx)
+            .unwrap()
+            .children
+            .iter()
+            .map(|&idx| tree.get(idx).unwrap().subid)
+            .collect();
+        assert_eq!(children_after, vec![1, 2, 4]);
     }
 
     #[test]
