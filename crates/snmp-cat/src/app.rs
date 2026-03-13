@@ -425,22 +425,35 @@ impl App {
             _ => "N/A".to_string(),
         };
 
-        let result = match &response.result {
-            SnmpResult::Value(oid, value) => ResultValue::Single(format!("{} = {}", oid, value)),
+        // For Value results, use the response OID (the actual instance OID)
+        // rather than the request OID (which may be a base/object-type OID)
+        let (display_oid, result) = match &response.result {
+            SnmpResult::Value(resp_oid, value) => {
+                (resp_oid.to_string(), ResultValue::Single(value.to_string()))
+            }
             SnmpResult::MultiValue(pairs) => {
                 let formatted: Vec<(String, String)> = pairs
                     .iter()
                     .map(|(oid, val)| (oid.to_string(), val.to_string()))
                     .collect();
-                ResultValue::Multiple(formatted)
+                (
+                    response.request_oid.to_string(),
+                    ResultValue::Multiple(formatted),
+                )
             }
-            SnmpResult::Ok(msg) => ResultValue::Single(msg.clone()),
-            SnmpResult::Error(e) => ResultValue::Error(e.clone()),
+            SnmpResult::Ok(msg) => (
+                response.request_oid.to_string(),
+                ResultValue::Single(msg.clone()),
+            ),
+            SnmpResult::Error(e) => (
+                response.request_oid.to_string(),
+                ResultValue::Error(e.clone()),
+            ),
         };
 
         let entry = ResultEntry {
             operation: response.operation,
-            oid: response.request_oid.to_string(),
+            oid: display_oid,
             target,
             result,
             timestamp: SystemTime::now(),
