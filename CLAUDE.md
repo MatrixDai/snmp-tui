@@ -43,6 +43,7 @@ Cargo workspace with 3 crates under `crates/`:
 - **One task at a time**: Work on a single task from `docs/tasks.md` per iteration. Do not start the next task until the current one is complete and verified.
 - **Branch per task**: Create a new branch for each task (e.g., `task/1.1-workspace-scaffolding`). Commit progress to the task branch after each iteration.
 - **Test instructions required**: After completing each task, provide clear, copy-pasteable test instructions (commands to run, expected output, what to check) so the work can be verified before moving on.
+- **Update tasks.md on completion**: When a task is completed, update `docs/tasks.md` to mark the task checkbox as done (`- [x]`).
 
 ## MIB Parser Notes
 

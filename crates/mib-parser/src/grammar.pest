@@ -1,0 +1,477 @@
+// ============================================================
+// MIB Grammar (SMIv1 + SMIv2)
+// ============================================================
+
+// Top-level: a MIB file is a sequence of module definitions
+mib_file = { SOI ~ module_definition+ ~ EOI }
+
+module_definition = {
+    module_name ~ "DEFINITIONS" ~ assignment_tag? ~ "::=" ~ "BEGIN"
+    ~ module_body
+    ~ "END"
+}
+
+assignment_tag = { "IMPLICIT" ~ "TAGS" | "EXPLICIT" ~ "TAGS" }
+
+module_name = @{ identifier }
+
+module_body = { (imports_section | exports_section | macro_definition | assignment)* }
+
+// ============================================================
+// IMPORTS
+// ============================================================
+
+imports_section = {
+    "IMPORTS" ~ import_clause* ~ ";"
+}
+
+import_clause = {
+    symbol_list ~ "FROM" ~ module_reference
+}
+
+symbol_list = { symbol ~ ("," ~ symbol)* }
+
+symbol = @{ identifier }
+
+module_reference = @{ identifier }
+
+// ============================================================
+// EXPORTS (ignored but parsed)
+// ============================================================
+
+exports_section = {
+    "EXPORTS" ~ (symbol ~ ("," ~ symbol)*)? ~ ";"
+}
+
+// ============================================================
+// Assignments (the core definitions)
+// ============================================================
+
+// Order matters: more specific patterns must come before catch-alls.
+// object_identifier_assignment must come before type_assignment and value_assignment
+// because they both start with `identifier`.
+assignment = {
+    object_type_def
+    | module_identity_def
+    | object_identity_def
+    | textual_convention_def
+    | object_group_def
+    | notification_type_def
+    | module_compliance_def
+    | notification_group_def
+    | trap_type_def
+    | agent_capabilities_def
+    | object_identifier_assignment
+    | sequence_assignment
+    | tagged_type_assignment
+    | type_assignment
+    | value_assignment
+    | unknown_assignment
+}
+
+// ============================================================
+// MODULE-IDENTITY (SMIv2)
+// ============================================================
+
+module_identity_def = {
+    identifier ~ "MODULE-IDENTITY"
+    ~ last_updated_clause
+    ~ organization_clause
+    ~ contact_info_clause
+    ~ description_clause
+    ~ revision_clause*
+    ~ "::=" ~ oid_value
+}
+
+last_updated_clause = { "LAST-UPDATED" ~ quoted_string }
+organization_clause = { "ORGANIZATION" ~ quoted_string }
+contact_info_clause = { "CONTACT-INFO" ~ quoted_string }
+revision_clause = { "REVISION" ~ quoted_string ~ "DESCRIPTION" ~ quoted_string }
+
+// ============================================================
+// OBJECT-TYPE (SMIv1 + SMIv2)
+// ============================================================
+
+object_type_def = {
+    identifier ~ "OBJECT-TYPE"
+    ~ syntax_clause
+    ~ units_clause?
+    ~ (access_clause | max_access_clause)?
+    ~ min_access_clause?
+    ~ status_clause
+    ~ description_clause?
+    ~ reference_clause?
+    ~ (index_clause | augments_clause)?
+    ~ defval_clause?
+    ~ "::=" ~ oid_value
+}
+
+syntax_clause   = { "SYNTAX" ~ syntax_type }
+units_clause    = { "UNITS" ~ quoted_string }
+access_clause   = { "ACCESS" ~ access_value }
+max_access_clause = { "MAX-ACCESS" ~ access_value }
+min_access_clause = { "MIN-ACCESS" ~ access_value }
+status_clause   = { "STATUS" ~ status_value }
+description_clause = { "DESCRIPTION" ~ quoted_string }
+reference_clause = { "REFERENCE" ~ quoted_string }
+index_clause    = { "INDEX" ~ "{" ~ index_entry ~ ("," ~ index_entry)* ~ "}" }
+augments_clause = { "AUGMENTS" ~ "{" ~ identifier ~ "}" }
+defval_clause   = { "DEFVAL" ~ "{" ~ defval_value ~ "}" }
+
+index_entry = { "IMPLIED"? ~ identifier }
+
+defval_value = {
+    quoted_string
+    | hex_string
+    | "{" ~ bit_list? ~ "}"
+    | integer_value
+    | oid_value
+    | identifier
+}
+
+hex_string = @{ "'" ~ (ASCII_HEX_DIGIT | " " | "\t" | "\r" | "\n")* ~ "'" ~ ("H" | "h" | "B" | "b") }
+
+bit_list = { identifier ~ ("," ~ identifier)* }
+
+access_value = @{
+    "not-accessible"
+    | "accessible-for-notify"
+    | "read-only"
+    | "read-write"
+    | "read-create"
+    | "write-only"
+}
+
+status_value = @{
+    "current"
+    | "deprecated"
+    | "obsolete"
+    | "mandatory"
+    | "optional"
+}
+
+// ============================================================
+// OBJECT-IDENTITY (SMIv2)
+// ============================================================
+
+object_identity_def = {
+    identifier ~ "OBJECT-IDENTITY"
+    ~ status_clause
+    ~ description_clause
+    ~ reference_clause?
+    ~ "::=" ~ oid_value
+}
+
+// ============================================================
+// TEXTUAL-CONVENTION (SMIv2)
+// ============================================================
+
+textual_convention_def = {
+    identifier ~ "::=" ~ "TEXTUAL-CONVENTION"
+    ~ display_hint_clause?
+    ~ status_clause
+    ~ description_clause
+    ~ reference_clause?
+    ~ syntax_clause
+}
+
+display_hint_clause = { "DISPLAY-HINT" ~ quoted_string }
+
+// ============================================================
+// OBJECT-GROUP, NOTIFICATION-TYPE, MODULE-COMPLIANCE,
+// NOTIFICATION-GROUP, AGENT-CAPABILITIES
+// ============================================================
+
+object_group_def = {
+    identifier ~ "OBJECT-GROUP"
+    ~ "OBJECTS" ~ "{" ~ symbol_list ~ "}"
+    ~ status_clause
+    ~ description_clause
+    ~ reference_clause?
+    ~ "::=" ~ oid_value
+}
+
+notification_type_def = {
+    identifier ~ "NOTIFICATION-TYPE"
+    ~ ("OBJECTS" ~ "{" ~ symbol_list ~ "}")?
+    ~ status_clause
+    ~ description_clause
+    ~ reference_clause?
+    ~ "::=" ~ oid_value
+}
+
+module_compliance_def = {
+    identifier ~ "MODULE-COMPLIANCE"
+    ~ status_clause
+    ~ description_clause
+    ~ reference_clause?
+    ~ compliance_module+
+    ~ "::=" ~ oid_value
+}
+
+compliance_module = {
+    "MODULE" ~ (!("MANDATORY-GROUPS" | "GROUP" | "OBJECT" | "::=") ~ module_reference)?
+    ~ ("MANDATORY-GROUPS" ~ "{" ~ symbol_list ~ "}")?
+    ~ compliance_item*
+}
+
+compliance_item = {
+    compliance_group | compliance_object
+}
+
+compliance_group = {
+    "GROUP" ~ identifier
+    ~ description_clause
+}
+
+compliance_object = {
+    "OBJECT" ~ identifier
+    ~ syntax_clause?
+    ~ ("WRITE-SYNTAX" ~ syntax_type)?
+    ~ min_access_clause?
+    ~ description_clause
+}
+
+notification_group_def = {
+    identifier ~ "NOTIFICATION-GROUP"
+    ~ "NOTIFICATIONS" ~ "{" ~ symbol_list ~ "}"
+    ~ status_clause
+    ~ description_clause
+    ~ reference_clause?
+    ~ "::=" ~ oid_value
+}
+
+agent_capabilities_def = {
+    identifier ~ "AGENT-CAPABILITIES"
+    ~ "PRODUCT-RELEASE" ~ quoted_string
+    ~ status_clause
+    ~ description_clause
+    ~ reference_clause?
+    ~ capability_module*
+    ~ "::=" ~ oid_value
+}
+
+capability_module = {
+    "SUPPORTS" ~ module_reference
+    ~ "INCLUDES" ~ "{" ~ symbol_list ~ "}"
+    ~ capability_variation*
+}
+
+capability_variation = {
+    "VARIATION" ~ identifier
+    ~ syntax_clause?
+    ~ ("WRITE-SYNTAX" ~ syntax_type)?
+    ~ ("ACCESS" ~ access_value)?
+    ~ ("CREATION-REQUIRES" ~ "{" ~ symbol_list ~ "}")?
+    ~ defval_clause?
+    ~ description_clause
+}
+
+// ============================================================
+// TRAP-TYPE (SMIv1)
+// ============================================================
+
+trap_type_def = {
+    identifier ~ "TRAP-TYPE"
+    ~ "ENTERPRISE" ~ identifier
+    ~ ("VARIABLES" ~ "{" ~ symbol_list ~ "}")?
+    ~ description_clause?
+    ~ reference_clause?
+    ~ "::=" ~ integer_value
+}
+
+// ============================================================
+// Plain OID assignment: name OBJECT IDENTIFIER ::= { ... }
+// ============================================================
+
+object_identifier_assignment = {
+    identifier ~ "OBJECT" ~ "IDENTIFIER" ~ "::=" ~ oid_value
+}
+
+// ============================================================
+// SEQUENCE assignment (must come before generic type_assignment)
+// ============================================================
+
+sequence_assignment = {
+    identifier ~ "::=" ~ "SEQUENCE" ~ "{" ~ sequence_field ~ ("," ~ sequence_field)* ~ "}"
+}
+
+sequence_field = {
+    identifier ~ syntax_type
+}
+
+// ============================================================
+// Tagged type assignment: ASN.1 [APPLICATION n] IMPLICIT ...
+// Also handles CHOICE types and other complex ASN.1 constructs
+// ============================================================
+
+tagged_type_assignment = {
+    identifier ~ "::=" ~ (asn1_tag ~ asn1_tagged_body | "CHOICE" ~ braced_body)
+}
+
+asn1_tag = @{
+    "[" ~ (" " | "\t")* ~ ("APPLICATION" | "UNIVERSAL" | "CONTEXT" | "PRIVATE") ~ (" " | "\t")+ ~ ASCII_DIGIT+ ~ (" " | "\t")* ~ "]"
+}
+
+// After a tag like [APPLICATION 0], consume IMPLICIT/EXPLICIT + type + optional constraint.
+// Stop when we see: identifier followed by MACRO or ::= or known keywords, or END
+// Stop when we see a newline followed by a new assignment or END.
+// Using newline as anchor prevents false matches inside comments.
+asn1_tagged_body = @{
+    (!(
+        ("\r"? ~ "\n") ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "-" | "_")* ~ (" " | "\t")+ ~ ("OBJECT-TYPE" | "OBJECT-IDENTITY" | "MODULE-IDENTITY" | "NOTIFICATION-TYPE" | "NOTIFICATION-GROUP" | "OBJECT-GROUP" | "MODULE-COMPLIANCE" | "AGENT-CAPABILITIES" | "TRAP-TYPE" | "MACRO")
+        | ("\r"? ~ "\n") ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "-" | "_")* ~ (" " | "\t")* ~ "::="
+        | ("\r"? ~ "\n") ~ "END"
+    ) ~ ANY)+
+}
+
+// Match balanced braces
+braced_body = @{
+    "{" ~ (braced_body | (!("}" | "{") ~ ANY))* ~ "}"
+}
+
+// ============================================================
+// Type assignment: TypeName ::= SyntaxType
+// ============================================================
+
+type_assignment = {
+    identifier ~ "::=" ~ syntax_type
+}
+
+// ============================================================
+// Value assignment (rare, catch-all)
+// ============================================================
+
+value_assignment = {
+    identifier ~ identifier ~ "::=" ~ value_rhs
+}
+
+value_rhs = {
+    oid_value | integer_value | quoted_string | identifier
+}
+
+// ============================================================
+// Catch-all: unknown assignment form — consume until next assignment
+// This handles ASN.1 constructs we don't need to parse in detail.
+// ============================================================
+
+unknown_assignment = {
+    identifier ~ "::=" ~ unknown_body
+}
+
+unknown_body = @{
+    (!(
+        ("\r"? ~ "\n") ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "-" | "_")* ~ (" " | "\t")+ ~ ("OBJECT-TYPE" | "OBJECT-IDENTITY" | "MODULE-IDENTITY" | "NOTIFICATION-TYPE" | "NOTIFICATION-GROUP" | "OBJECT-GROUP" | "MODULE-COMPLIANCE" | "AGENT-CAPABILITIES" | "TRAP-TYPE" | "MACRO")
+        | ("\r"? ~ "\n") ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "-" | "_")* ~ (" " | "\t")* ~ "::="
+        | ("\r"? ~ "\n") ~ "END"
+    ) ~ ANY)+
+}
+
+// ============================================================
+// Macro definitions (SMIv1/SMIv2) — skip content
+// ============================================================
+
+macro_definition = {
+    identifier ~ "MACRO" ~ "::=" ~ "BEGIN" ~ macro_body ~ "END"
+}
+
+macro_body = @{ (!("END") ~ ANY)* }
+
+// ============================================================
+// Syntax types
+// ============================================================
+
+syntax_type = {
+    integer_enum_type
+    | bits_type
+    | sequence_of_type
+    | constrained_type
+    | named_type_with_enum
+    | builtin_type
+    | named_type
+}
+
+// Named type with enum restriction: e.g., RowStatus { active(1), notInService(2) }
+named_type_with_enum = {
+    named_type ~ "{" ~ enum_item ~ ("," ~ enum_item)* ~ "}"
+}
+
+integer_enum_type = {
+    ("INTEGER" | "BITS") ~ "{" ~ enum_item ~ ("," ~ enum_item)* ~ "}"
+}
+
+enum_item = { identifier ~ "(" ~ integer_value ~ ")" }
+
+bits_type = {
+    "BITS" ~ "{" ~ enum_item ~ ("," ~ enum_item)* ~ "}"
+}
+
+sequence_of_type = {
+    "SEQUENCE" ~ "OF" ~ identifier
+}
+
+constrained_type = {
+    (builtin_type | named_type) ~ "(" ~ constraint_body ~ ")"
+}
+
+// Constraint body: handle nested parens (e.g., SIZE (0..255))
+constraint_body = { (("(" ~ constraint_body ~ ")") | (!")" ~ ANY))+ }
+
+// builtin_type must not match as a prefix of a longer identifier.
+// We use a negative lookahead for alphanumeric/hyphen to enforce word boundary.
+builtin_type = @{
+    ( "Integer32"
+    | "INTEGER"
+    | "OCTET" ~ (" " | "\t" | "\r" | "\n")+ ~ "STRING"
+    | "OBJECT" ~ (" " | "\t" | "\r" | "\n")+ ~ "IDENTIFIER"
+    | "IpAddress"
+    | "Counter64"
+    | "Counter32"
+    | "Counter"
+    | "Gauge32"
+    | "Gauge"
+    | "Unsigned32"
+    | "TimeTicks"
+    | "Opaque"
+    | "NetworkAddress"
+    | "NULL"
+    | "BITS"
+    ) ~ !(ASCII_ALPHANUMERIC | "-" | "_")
+}
+
+named_type = @{ identifier }
+
+// ============================================================
+// OID value notation: { parent subid } or { iso org(3) ... }
+// ============================================================
+
+oid_value = {
+    "{" ~ oid_component+ ~ "}"
+}
+
+oid_component = {
+    named_and_number
+    | number_only
+    | name_only
+}
+
+named_and_number = { identifier ~ "(" ~ integer_value ~ ")" }
+number_only = @{ ASCII_DIGIT+ }
+name_only = @{ identifier }
+
+// ============================================================
+// Primitives
+// ============================================================
+
+integer_value = @{ "-"? ~ ASCII_DIGIT+ }
+
+quoted_string = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+
+identifier = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "-" | "_")* }
+
+// ============================================================
+// Whitespace & comments
+// ============================================================
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT = _{ "--" ~ (!("\n" | "--") ~ ANY)* ~ ("\n" | "--" | EOI) }
