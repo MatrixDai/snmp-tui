@@ -6,11 +6,11 @@ Ordered task breakdown for building snmp-cat. Each milestone groups related task
 
 ## Milestone 1: Project Scaffolding
 
-- [ ] **1.1** Create root `Cargo.toml` with workspace members: `crates/mib-parser`, `crates/snmp-client`, `crates/snmp-cat`
-- [ ] **1.2** Stub out each crate with `Cargo.toml` + `lib.rs` (or `main.rs` for snmp-cat)
-- [ ] **1.3** Define shared types used across crates — `Oid` (numeric OID vector), `MibObject` (name, oid, module, syntax, access, status, description, index clause), `OidTree` (arena-based `Vec<Node>` with index references) — either in `mib-parser` (re-exported) or a shared module
-- [ ] **1.4** Add a `justfile` or `Makefile` with targets: `build`, `test`, `clippy`, `fmt-check`
-- [ ] **1.5** Confirm `cargo build`, `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check` all pass on the empty workspace
+- [x] **1.1** Create root `Cargo.toml` with workspace members: `crates/mib-parser`, `crates/snmp-client`, `crates/snmp-cat`
+- [x] **1.2** Stub out each crate with `Cargo.toml` + `lib.rs` (or `main.rs` for snmp-cat)
+- [x] **1.3** Define shared types used across crates — `Oid` (numeric OID vector), `MibObject` (name, oid, module, syntax, access, status, description, index clause), `OidTree` (arena-based `Vec<Node>` with index references) — either in `mib-parser` (re-exported) or a shared module
+- [x] **1.4** Add a `justfile` or `Makefile` with targets: `build`, `test`, `clippy`, `fmt-check`
+- [x] **1.5** Confirm `cargo build`, `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check` all pass on the empty workspace
 
 ---
 
