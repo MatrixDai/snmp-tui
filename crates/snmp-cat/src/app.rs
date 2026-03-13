@@ -248,6 +248,9 @@ pub struct App {
     pub connect_port: u16,
     pub connect_version: String,
     pub connect_community: String,
+    /// Last OID returned by GETNEXT, keyed by the base (tree node) OID.
+    /// Used to advance through table rows on repeated GETNEXT presses.
+    last_getnext_oid: Option<(mib_parser::Oid, mib_parser::Oid)>,
 }
 
 impl App {
@@ -271,6 +274,7 @@ impl App {
             connect_port: 161,
             connect_version: "v2c".to_string(),
             connect_community: "public".to_string(),
+            last_getnext_oid: None,
         }
     }
 
@@ -330,6 +334,42 @@ impl App {
         }
     }
 
+    /// Send a GETNEXT that advances from the last returned OID.
+    /// If no previous GETNEXT result exists for this node, starts from the base OID.
+    fn send_advancing_getnext(&mut self) {
+        if self.inflight_op.is_some() {
+            return;
+        }
+        if !matches!(self.connection, ConnectionState::Connected { .. }) {
+            return;
+        }
+        let base_oid = match self.selected_oid() {
+            Some(oid) => oid,
+            None => return,
+        };
+
+        // If we have a previous result whose request was for this base OID
+        // (or a sub-OID of it), advance from the last returned OID
+        let request_oid = if let Some((ref prev_base, ref prev_result)) = self.last_getnext_oid {
+            if prev_result.components().starts_with(base_oid.components()) {
+                // Continue from last returned OID
+                prev_result.clone()
+            } else if prev_base == &base_oid {
+                prev_result.clone()
+            } else {
+                base_oid
+            }
+        } else {
+            base_oid
+        };
+
+        if let Some(ref worker) = self.worker
+            && worker.try_send(SnmpRequest::GetNext(request_oid)).is_ok()
+        {
+            self.inflight_op = Some(OperationType::GetNext);
+        }
+    }
+
     /// Get the OID of the currently selected tree node.
     fn selected_oid(&self) -> Option<mib_parser::Oid> {
         let node_idx = self.tree_state.selected_node()?;
@@ -339,6 +379,15 @@ impl App {
     /// Handle an SNMP response from the background worker.
     pub fn handle_snmp_response(&mut self, response: SnmpResponse) {
         self.inflight_op = None;
+
+        // Track last GETNEXT result OID for advancing through table rows
+        if matches!(
+            response.operation,
+            OperationType::Get | OperationType::GetNext
+        ) && let SnmpResult::Value(ref resp_oid, _) = response.result
+        {
+            self.last_getnext_oid = Some((response.request_oid.clone(), resp_oid.clone()));
+        }
 
         // Handle connect/disconnect responses specially
         match response.operation {
@@ -595,10 +644,13 @@ impl App {
                 self.results_state.jump_bottom();
             }
             Message::SnmpGet => {
-                self.send_snmp_request(SnmpRequest::Get);
+                // Smart GET: use GETNEXT to auto-discover the first instance
+                // (handles both scalar .0 and table column .1 correctly)
+                self.send_snmp_request(SnmpRequest::GetNext);
             }
             Message::SnmpGetNext => {
-                self.send_snmp_request(SnmpRequest::GetNext);
+                // Advancing GETNEXT: continue from last returned OID if available
+                self.send_advancing_getnext();
             }
             Message::SnmpWalk => {
                 self.send_snmp_request(SnmpRequest::Walk);
@@ -628,10 +680,11 @@ impl App {
             _ => {}
         }
 
-        // Reset detail scroll when selected node changes
+        // Reset state when selected node changes
         let current_node = self.tree_state.selected_node();
         if current_node != self.prev_selected_node {
             self.detail_state.reset_scroll();
+            self.last_getnext_oid = None;
             self.prev_selected_node = current_node;
         }
     }
