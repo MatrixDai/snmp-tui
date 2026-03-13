@@ -16,18 +16,18 @@ Ordered task breakdown for building snmp-cat. Each milestone groups related task
 
 ## Milestone 2: MIB Parser (`crates/mib-parser`)
 
-- [ ] **2.1** Add `pest` and `pest_derive` dependencies; create `grammar.pest` with rules for: whitespace/comments, identifiers, OID value notation, IMPORTS block
-- [ ] **2.2** Parse MODULE-IDENTITY definitions (module name, last-updated, organization, contact, description, revision list)
-- [ ] **2.3** Parse OBJECT-TYPE definitions — SMIv2 style (SYNTAX, MAX-ACCESS, STATUS, DESCRIPTION, INDEX, DEFVAL, `::=` OID assignment)
-- [ ] **2.4** Parse SMIv1 OBJECT-TYPE compat (ACCESS instead of MAX-ACCESS, old-style status values `mandatory`/`optional`/`obsolete`)
-- [ ] **2.5** Parse OBJECT-IDENTITY definitions
-- [ ] **2.6** Parse TEXTUAL-CONVENTION definitions (DISPLAY-HINT, STATUS, DESCRIPTION, SYNTAX)
-- [ ] **2.7** Parse SEQUENCE definitions and associate with table/row OBJECT-TYPEs (INDEX clause, column list)
-- [ ] **2.8** Implement arena-based OID tree builder — take parsed definitions and insert into `OidTree`, resolving parent chains from OID assignments
-- [ ] **2.9** Implement IMPORTS resolution — collect IMPORTS from each file, resolve cross-module references when loading multiple MIBs, topological sort or multi-pass loading
-- [ ] **2.10** Public API: `load_mibs(paths: &[PathBuf]) -> Result<OidTree>` — load a set of MIB files, resolve imports, return unified tree
-- [ ] **2.11** Bundle standard RFC MIB files as embedded resources or in a `mibs/` data directory: SNMPv2-SMI, SNMPv2-TC, SNMPv2-CONF, SNMPv2-MIB, IF-MIB, IP-MIB, TCP-MIB, UDP-MIB, HOST-RESOURCES-MIB
-- [ ] **2.12** Unit tests: parse each bundled RFC MIB successfully, verify known OIDs land at correct tree positions (e.g., sysDescr = 1.3.6.1.2.1.1.1), verify IMPORTS resolution across SNMPv2-SMI → SNMPv2-MIB chain
+- [x] **2.1** Add `pest` and `pest_derive` dependencies; create `grammar.pest` with rules for: whitespace/comments, identifiers, OID value notation, IMPORTS block
+- [x] **2.2** Parse MODULE-IDENTITY definitions (module name, last-updated, organization, contact, description, revision list)
+- [x] **2.3** Parse OBJECT-TYPE definitions — SMIv2 style (SYNTAX, MAX-ACCESS, STATUS, DESCRIPTION, INDEX, DEFVAL, `::=` OID assignment)
+- [x] **2.4** Parse SMIv1 OBJECT-TYPE compat (ACCESS instead of MAX-ACCESS, old-style status values `mandatory`/`optional`/`obsolete`)
+- [x] **2.5** Parse OBJECT-IDENTITY definitions
+- [x] **2.6** Parse TEXTUAL-CONVENTION definitions (DISPLAY-HINT, STATUS, DESCRIPTION, SYNTAX)
+- [x] **2.7** Parse SEQUENCE definitions and associate with table/row OBJECT-TYPEs (INDEX clause, column list)
+- [x] **2.8** Implement arena-based OID tree builder — take parsed definitions and insert into `OidTree`, resolving parent chains from OID assignments
+- [x] **2.9** Implement IMPORTS resolution — collect IMPORTS from each file, resolve cross-module references when loading multiple MIBs, topological sort or multi-pass loading
+- [x] **2.10** Public API: `load_mibs(paths: &[PathBuf]) -> Result<OidTree>` — load a set of MIB files, resolve imports, return unified tree
+- [x] **2.11** Bundle standard RFC MIB files as embedded resources or in a `mibs/` data directory: SNMPv2-SMI, SNMPv2-TC, SNMPv2-CONF, SNMPv2-MIB, IF-MIB, IP-MIB, TCP-MIB, UDP-MIB, HOST-RESOURCES-MIB
+- [x] **2.12** Unit tests: parse each bundled RFC MIB successfully, verify known OIDs land at correct tree positions (e.g., sysDescr = 1.3.6.1.2.1.1.1), verify IMPORTS resolution across SNMPv2-SMI → SNMPv2-MIB chain
 
 ---
 
