@@ -1,3 +1,4 @@
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::time::Duration;
 
 use mib_parser::Oid;
@@ -5,6 +6,34 @@ use mib_parser::Oid;
 use crate::config::{AuthProtocol, PrivProtocol, SnmpConfig, SnmpVersion};
 use crate::error::{SnmpError, error_status_message};
 use crate::value::SnmpValue;
+
+/// Resolve a host:port string to a SocketAddr, preferring IPv4.
+///
+/// Many SNMP agents only listen on IPv4, but `localhost` often resolves
+/// to `::1` (IPv6) first on Linux. This causes silent send failures
+/// and receive timeouts. By explicitly resolving and preferring IPv4,
+/// we match the behavior of standard SNMP tools like snmpget.
+fn resolve_prefer_ipv4(dest: &str) -> Result<SocketAddr, SnmpError> {
+    let addrs: Vec<SocketAddr> = dest
+        .to_socket_addrs()
+        .map_err(|e| SnmpError::Connection(format!("DNS resolution failed for {}: {}", dest, e)))?
+        .collect();
+
+    if addrs.is_empty() {
+        return Err(SnmpError::Connection(format!(
+            "no addresses found for {}",
+            dest
+        )));
+    }
+
+    // Prefer IPv4
+    addrs
+        .iter()
+        .find(|a| a.is_ipv4())
+        .or(addrs.first())
+        .copied()
+        .ok_or_else(|| SnmpError::Connection(format!("no addresses found for {}", dest)))
+}
 
 /// Convert our Oid to snmp2's Oid.
 fn to_snmp2_oid(oid: &Oid) -> Result<snmp2::Oid<'static>, SnmpError> {
@@ -97,13 +126,17 @@ impl SnmpSession {
         let dest = config.destination();
         let timeout = Duration::from_millis(config.timeout_ms);
 
+        // Resolve hostname preferring IPv4 to avoid IPv6 issues
+        // (many SNMP agents only listen on IPv4)
+        let resolved = resolve_prefer_ipv4(&dest)?;
+
         let inner = match config.version {
             SnmpVersion::V1 => {
-                snmp2::SyncSession::new_v1(&dest, config.community.as_bytes(), Some(timeout), 0)
+                snmp2::SyncSession::new_v1(resolved, config.community.as_bytes(), Some(timeout), 0)
                     .map_err(SnmpError::Io)?
             }
             SnmpVersion::V2c => {
-                snmp2::SyncSession::new_v2c(&dest, config.community.as_bytes(), Some(timeout), 0)
+                snmp2::SyncSession::new_v2c(resolved, config.community.as_bytes(), Some(timeout), 0)
                     .map_err(SnmpError::Io)?
             }
             SnmpVersion::V3 => {
@@ -114,7 +147,7 @@ impl SnmpSession {
 
                 let security = build_v3_security(creds);
 
-                let mut session = snmp2::SyncSession::new_v3(&dest, Some(timeout), 0, security)
+                let mut session = snmp2::SyncSession::new_v3(resolved, Some(timeout), 0, security)
                     .map_err(SnmpError::Io)?;
 
                 // Initialize v3 session (discovers engine ID)
