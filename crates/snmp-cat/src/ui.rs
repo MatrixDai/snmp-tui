@@ -6,7 +6,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::app::{App, FocusedPanel, ResultValue};
+use crate::app::{App, ConnectionState, FocusedPanel, ResultValue};
 
 /// Render the entire application UI.
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -19,12 +19,28 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         ])
         .split(frame.area());
 
-    draw_title_bar(frame, outer[0]);
+    draw_title_bar(frame, outer[0], app);
     draw_main_area(frame, outer[1], app);
     draw_status_bar(frame, outer[2], app);
 }
 
-fn draw_title_bar(frame: &mut Frame, area: Rect) {
+fn draw_title_bar(frame: &mut Frame, area: Rect, app: &App) {
+    let conn_span = match &app.connection {
+        ConnectionState::Disconnected => {
+            Span::styled("[No device]", Style::default().fg(Color::DarkGray))
+        }
+        ConnectionState::Connecting => {
+            Span::styled("[Connecting...]", Style::default().fg(Color::Yellow))
+        }
+        ConnectionState::Connected { host, version } => Span::styled(
+            format!("[{} {}]", host, version),
+            Style::default().fg(Color::Green),
+        ),
+        ConnectionState::Error(e) => {
+            Span::styled(format!("[Error: {}]", e), Style::default().fg(Color::Red))
+        }
+    };
+
     let title = Line::from(vec![
         Span::styled(
             "snmp-cat",
@@ -33,7 +49,7 @@ fn draw_title_bar(frame: &mut Frame, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw("  "),
-        Span::styled("[No device]", Style::default().fg(Color::DarkGray)),
+        conn_span,
     ]);
     frame.render_widget(Paragraph::new(title).centered(), area);
 }
@@ -78,7 +94,6 @@ fn draw_tree_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Viewport height = inner area height
     let viewport_height = inner.height as usize;
     app.tree_state.ensure_visible(viewport_height);
 
@@ -100,7 +115,6 @@ fn draw_tree_panel(frame: &mut Frame, area: Rect, app: &mut App) {
         let has_children = !node.children.is_empty();
         let is_expanded = app.tree_state.is_expanded(node_idx);
 
-        // Build the line: indent + prefix + name
         let indent = "  ".repeat(depth);
         let prefix = if has_children {
             if is_expanded { "▾ " } else { "▸ " }
@@ -108,7 +122,6 @@ fn draw_tree_panel(frame: &mut Frame, area: Rect, app: &mut App) {
             "  "
         };
 
-        // Branch nodes: name(subid), leaf nodes: just name
         let label = if node.name.is_empty() {
             format!("{}", node.subid)
         } else if has_children {
@@ -157,8 +170,10 @@ fn draw_detail_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     let total_lines = lines.len();
     let viewport_height = inner.height as usize;
 
-    // Update detail state with actual total lines for proper scroll bounds
+    // Update detail state with actual dimensions for scroll bounds
     app.detail_state.total_lines = total_lines;
+    app.detail_state.viewport_height = viewport_height;
+
     // Clamp scroll offset
     if total_lines > viewport_height {
         if app.detail_state.scroll_offset > total_lines - viewport_height {
@@ -288,7 +303,6 @@ fn build_detail_lines(app: &App) -> Vec<Line<'static>> {
 
         if let Some(ref desc) = mib_obj.description {
             lines.push(Line::from(Span::raw("")));
-            // Strip quotes from description if present
             let desc = desc.trim_matches('"').trim();
             for line in desc.lines() {
                 lines.push(Line::from(Span::styled(
@@ -319,6 +333,7 @@ fn draw_results_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(block, area);
 
     let viewport_height = inner.height as usize;
+    app.results_state.viewport_height = viewport_height;
 
     if app.results_state.entries.is_empty() {
         let placeholder = Line::from(Span::styled(
@@ -403,7 +418,7 @@ fn build_results_lines(app: &App) -> Vec<Line<'static>> {
                 lines.push(Line::from(vec![
                     Span::styled("  ", error_style),
                     Span::styled(entry.oid.clone(), oid_style),
-                    Span::styled(" → ", dim_style),
+                    Span::styled(" -> ", dim_style),
                     Span::styled(err.clone(), error_style),
                 ]));
             }
@@ -427,9 +442,21 @@ fn format_timestamp(ts: SystemTime) -> String {
 }
 
 fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
+    // Show loading indicator if an operation is in-flight
+    if let Some(ref op) = app.inflight_op {
+        let loading = Line::from(Span::styled(
+            format!(" [{} in progress...] ", op),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+        frame.render_widget(Paragraph::new(loading), area);
+        return;
+    }
+
     let hints = match app.focused {
         FocusedPanel::Tree => {
-            "[Tab] Switch  [j/k] Navigate  [Enter] Expand  [h/l] Collapse/Expand  [gg/G] Top/Bottom  [q] Quit"
+            "[Tab] Switch  [j/k] Navigate  [Enter] Expand  [h/l] Collapse/Expand  [gg/G] Top/Bottom  [Space] GET  [n] GETNEXT  [w] WALK  [q] Quit"
         }
         FocusedPanel::Detail => "[Tab] Switch  [j/k] Scroll  [q] Quit",
         FocusedPanel::Results => "[Tab] Switch  [j/k] Scroll  [G] Latest  [q] Quit",

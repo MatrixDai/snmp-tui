@@ -99,13 +99,13 @@ Ordered task breakdown for building snmp-cat. Each milestone groups related task
 
 > Depends on: Milestone 3 (SNMP client), Milestone 6 (results panel)
 
-- [ ] **7.1** Wire mpsc channels: main thread holds `Sender<SnmpRequest>` + `Receiver<SnmpResponse>`; spawn tokio background task with the other halves
-- [ ] **7.2** Non-blocking check for `SnmpResponse` each event loop iteration (try_recv); dispatch `Message::SnmpResponse` on receipt
-- [ ] **7.3** `g` key (tree focused) → send `SnmpRequest::Get` for selected OID → display result in results panel
-- [ ] **7.4** `n` key → send `SnmpRequest::GetNext` → display response
-- [ ] **7.5** `w` key → send `SnmpRequest::Walk` → stream results into results panel as they arrive
-- [ ] **7.6** Loading indicator in status bar while SNMP operation is in-flight
-- [ ] **7.7** Error display in results panel: timeout, noSuchObject, noSuchInstance, auth failure, network errors
+- [x] **7.1** Wire mpsc channels: main thread holds `Sender<SnmpRequest>` + `Receiver<SnmpResponse>`; spawn tokio background task with the other halves
+- [x] **7.2** Non-blocking check for `SnmpResponse` each event loop iteration (try_recv); dispatch `Message::SnmpResponse` on receipt
+- [x] **7.3** `Space` key (tree focused) → send `SnmpRequest::Get` for selected OID → display result in results panel (changed from `g` to avoid `gg` jump-top conflict)
+- [x] **7.4** `n` key → send `SnmpRequest::GetNext` → display response
+- [x] **7.5** `w` key → send `SnmpRequest::Walk` → stream results into results panel as they arrive
+- [x] **7.6** Loading indicator in status bar while SNMP operation is in-flight
+- [x] **7.7** Error display in results panel: timeout, noSuchObject, noSuchInstance, auth failure, network errors
 
 ---
 

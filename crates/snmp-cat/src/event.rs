@@ -61,6 +61,10 @@ fn handle_tree_key(key: KeyEvent) -> Option<Message> {
         KeyCode::Char('h') | KeyCode::Left => Some(Message::TreeCollapse),
         KeyCode::Char('G') => Some(Message::TreeJumpBottom),
         KeyCode::Char('g') => Some(Message::PrefixG),
+        // SNMP operations
+        KeyCode::Char(' ') => Some(Message::SnmpGet),
+        KeyCode::Char('n') => Some(Message::SnmpGetNext),
+        KeyCode::Char('w') => Some(Message::SnmpWalk),
         _ => None,
     }
 }
