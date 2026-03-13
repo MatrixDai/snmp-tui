@@ -71,13 +71,13 @@ Ordered task breakdown for building snmp-cat. Each milestone groups related task
 
 > Depends on: Milestone 2 (OID tree), Milestone 4 (TUI shell)
 
-- [ ] **5.1** Build `TreeState` — tracks: selected index, expanded set (`HashSet<NodeIndex>`), scroll offset, flattened visible-node list
-- [ ] **5.2** Render tree widget from `OidTree` — iterate visible nodes, indent by depth, prefix with `▸` (collapsed, has children) / `▾` (expanded) / space (leaf); branch nodes display as `name(subid)`, leaf nodes display as just `name`
-- [ ] **5.3** Keyboard navigation: `j`/`↓` move selection down, `k`/`↑` move selection up in flattened list
-- [ ] **5.4** Expand/collapse: `Enter`/`l`/`→` expands or enters; `h`/`←` collapses or moves to parent
-- [ ] **5.5** Scroll viewport when selection moves beyond visible area
-- [ ] **5.6** `gg` jump to top, `G` jump to bottom (requires tracking `g` press state with timeout or next-key check)
-- [ ] **5.7** Selection change emits update to detail panel (drives content of Object Detail)
+- [x] **5.1** Build `TreeState` — tracks: selected index, expanded set (`HashSet<NodeIndex>`), scroll offset, flattened visible-node list
+- [x] **5.2** Render tree widget from `OidTree` — iterate visible nodes, indent by depth, prefix with `▸` (collapsed, has children) / `▾` (expanded) / space (leaf); branch nodes display as `name(subid)`, leaf nodes display as just `name`
+- [x] **5.3** Keyboard navigation: `j`/`↓` move selection down, `k`/`↑` move selection up in flattened list
+- [x] **5.4** Expand/collapse: `Enter`/`l`/`→` expands or enters; `h`/`←` collapses or moves to parent
+- [x] **5.5** Scroll viewport when selection moves beyond visible area
+- [x] **5.6** `gg` jump to top, `G` jump to bottom (requires tracking `g` press state with timeout or next-key check)
+- [x] **5.7** Selection change emits update to detail panel (drives content of Object Detail)
 
 ---
 
