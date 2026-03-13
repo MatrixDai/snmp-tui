@@ -53,17 +53,17 @@ Ordered task breakdown for building snmp-cat. Each milestone groups related task
 
 > Depends on: Milestone 1
 
-- [ ] **4.1** Add dependencies: `ratatui`, `crossterm`, `clap`, `serde`, `toml`, `tokio`
-- [ ] **4.2** Define CLI args with clap: `--mib-dir`, `--mib-file`, `--host`, `--port`, `--community`, `--snmp-version`, `--timeout`, `--retries`
-- [ ] **4.3** Implement config file loading from `~/.config/snmp-cat/config.toml` — merge with CLI args (CLI takes precedence)
-- [ ] **4.4** Terminal setup: enter alternate screen, enable raw mode; teardown on exit (including panic hook for clean restore)
-- [ ] **4.5** Event loop skeleton: `crossterm::event::poll(250ms)` → convert key events to `Message` → `update(&mut app, msg)` → `view(&app, &mut frame)`
-- [ ] **4.6** Define `App` struct (model): `focused: FocusedPanel`, `tree: TreeState`, `detail: DetailState`, `results: ResultsState`, `modal: Option<Modal>`, `connection: Option<DeviceConnection>`, `mib_store: OidTree`
-- [ ] **4.7** Define `Message` enum and `FocusedPanel` enum per design doc
-- [ ] **4.8** Render three-panel layout with ratatui constraints (title bar Length(1), main area with 30/70 horizontal split, right area 50/50 vertical split, status bar Length(1))
-- [ ] **4.9** Implement focus cycling: Tab / Shift+Tab rotates `FocusedPanel`; focused panel border cyan, unfocused gray
-- [ ] **4.10** Render placeholder text in all panels, title bar with app name, status bar with key hints
-- [ ] **4.11** `q` key → `Message::Quit` → clean exit
+- [x] **4.1** Add dependencies: `ratatui`, `crossterm`, `clap`, `serde`, `toml`, `tokio`
+- [x] **4.2** Define CLI args with clap: `--mib-dir`, `--mib-file`, `--host`, `--port`, `--community`, `--snmp-version`, `--timeout`, `--retries`
+- [x] **4.3** Implement config file loading from `~/.config/snmp-cat/config.toml` — merge with CLI args (CLI takes precedence)
+- [x] **4.4** Terminal setup: enter alternate screen, enable raw mode; teardown on exit (including panic hook for clean restore)
+- [x] **4.5** Event loop skeleton: `crossterm::event::poll(250ms)` → convert key events to `Message` → `update(&mut app, msg)` → `view(&app, &mut frame)`
+- [x] **4.6** Define `App` struct (model): `focused: FocusedPanel`, `tree: TreeState`, `detail: DetailState`, `results: ResultsState`, `modal: Option<Modal>`, `connection: Option<DeviceConnection>`, `mib_store: OidTree`
+- [x] **4.7** Define `Message` enum and `FocusedPanel` enum per design doc
+- [x] **4.8** Render three-panel layout with ratatui constraints (title bar Length(1), main area with 30/70 horizontal split, right area 50/50 vertical split, status bar Length(1))
+- [x] **4.9** Implement focus cycling: Tab / Shift+Tab rotates `FocusedPanel`; focused panel border cyan, unfocused gray
+- [x] **4.10** Render placeholder text in all panels, title bar with app name, status bar with key hints
+- [x] **4.11** `q` key → `Message::Quit` → clean exit
 
 ---
 

@@ -79,6 +79,8 @@ fn build_tree_from_modules(all_modules: &[RawParsedModule]) -> Result<OidTree, P
         }
     }
 
+    tree.sort_children();
+
     Ok(tree)
 }
 
