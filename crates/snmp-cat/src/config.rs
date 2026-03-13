@@ -38,6 +38,10 @@ pub struct CliArgs {
     /// SNMP retries
     #[arg(long)]
     pub retries: Option<u32>,
+
+    /// Enable debug logging to /tmp/snmp-cat-debug.log
+    #[arg(long)]
+    pub debug: bool,
 }
 
 /// Configuration loaded from `~/.config/snmp-cat/config.toml`.
@@ -66,6 +70,7 @@ pub struct AppConfig {
     pub snmp_version: String,
     pub timeout_ms: u64,
     pub retries: u32,
+    pub debug: bool,
 }
 
 impl Default for AppConfig {
@@ -79,6 +84,7 @@ impl Default for AppConfig {
             snmp_version: "v2c".to_string(),
             timeout_ms: 5000,
             retries: 1,
+            debug: false,
         }
     }
 }
@@ -124,6 +130,7 @@ pub fn merge_config(file: FileConfig, cli: &CliArgs) -> AppConfig {
             .unwrap_or_else(|| "v2c".to_string()),
         timeout_ms: cli.timeout.or(file.timeout).unwrap_or(5000),
         retries: cli.retries.or(file.retries).unwrap_or(1),
+        debug: cli.debug,
     }
 }
 

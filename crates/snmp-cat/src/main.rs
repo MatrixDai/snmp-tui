@@ -45,7 +45,8 @@ fn main() -> io::Result<()> {
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
 
     // Run application within tokio context
-    let result = runtime.block_on(async { run(&mut terminal, oid_tree, snmp_config).await });
+    let debug = app_config.debug;
+    let result = runtime.block_on(async { run(&mut terminal, oid_tree, snmp_config, debug).await });
 
     // Restore terminal
     restore_terminal()?;
@@ -71,11 +72,12 @@ async fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     oid_tree: mib_parser::OidTree,
     snmp_config: Option<snmp_client::SnmpConfig>,
+    debug: bool,
 ) -> io::Result<()> {
     let mut app = App::new(oid_tree);
 
     // Initialize SNMP worker
-    app.init_worker();
+    app.init_worker(debug);
 
     // Auto-connect if host was provided via CLI/config
     if let Some(config) = snmp_config {

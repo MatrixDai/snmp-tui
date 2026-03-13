@@ -243,7 +243,7 @@ fn session_v3_without_credentials() {
 
 #[tokio::test]
 async fn worker_disconnect_without_connect() {
-    let (worker, mut response_rx) = SnmpWorker::spawn();
+    let (worker, mut response_rx) = SnmpWorker::spawn(None);
 
     worker
         .send(SnmpRequest::Disconnect)
@@ -257,7 +257,7 @@ async fn worker_disconnect_without_connect() {
 
 #[tokio::test]
 async fn worker_get_without_connect() {
-    let (worker, mut response_rx) = SnmpWorker::spawn();
+    let (worker, mut response_rx) = SnmpWorker::spawn(None);
 
     let oid = Oid::new(vec![1, 3, 6, 1, 2, 1, 1, 1, 0]);
     worker
@@ -276,7 +276,7 @@ async fn worker_get_without_connect() {
 
 #[tokio::test]
 async fn worker_walk_without_connect() {
-    let (worker, mut response_rx) = SnmpWorker::spawn();
+    let (worker, mut response_rx) = SnmpWorker::spawn(None);
 
     let oid = Oid::new(vec![1, 3, 6, 1, 2, 1]);
     worker
@@ -291,7 +291,7 @@ async fn worker_walk_without_connect() {
 
 #[tokio::test]
 async fn worker_set_without_connect() {
-    let (worker, mut response_rx) = SnmpWorker::spawn();
+    let (worker, mut response_rx) = SnmpWorker::spawn(None);
 
     let oid = Oid::new(vec![1, 3, 6, 1, 2, 1, 1, 5, 0]);
     worker
@@ -309,7 +309,7 @@ async fn worker_set_without_connect() {
 
 #[tokio::test]
 async fn worker_connect_to_unreachable_host() {
-    let (worker, mut response_rx) = SnmpWorker::spawn();
+    let (worker, mut response_rx) = SnmpWorker::spawn(None);
 
     let config = SnmpConfig {
         host: "192.0.2.1".to_string(),

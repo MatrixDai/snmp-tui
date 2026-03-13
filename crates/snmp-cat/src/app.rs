@@ -266,8 +266,13 @@ impl App {
     }
 
     /// Initialize the SNMP worker (must be called from a tokio context).
-    pub fn init_worker(&mut self) {
-        let (worker, response_rx) = SnmpWorker::spawn();
+    pub fn init_worker(&mut self, debug: bool) {
+        let debug_log = if debug {
+            Some(std::path::PathBuf::from("/tmp/snmp-cat-debug.log"))
+        } else {
+            None
+        };
+        let (worker, response_rx) = SnmpWorker::spawn(debug_log);
         self.worker = Some(worker);
         self.response_rx = Some(response_rx);
     }
