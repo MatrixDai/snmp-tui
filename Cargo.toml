@@ -1,0 +1,12 @@
+[workspace]
+members = [
+    "crates/mib-parser",
+    "crates/snmp-client",
+    "crates/snmp-cat",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
