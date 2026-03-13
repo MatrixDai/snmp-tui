@@ -351,13 +351,12 @@ impl App {
 
         // If we have a previous result whose request was for this base OID
         // (or a sub-OID of it), advance from the last returned OID
-        let request_oid = if let Some((ref prev_base, ref prev_result)) = self.last_getnext_oid {
+        let request_oid = if let Some((_, ref prev_result)) = self.last_getnext_oid {
             if prev_result.components().starts_with(base_oid.components()) {
-                // Continue from last returned OID
-                prev_result.clone()
-            } else if prev_base == &base_oid {
+                // Still within subtree — continue from last returned OID
                 prev_result.clone()
             } else {
+                // Left the subtree — loop back to start
                 base_oid
             }
         } else {
@@ -414,6 +413,15 @@ impl App {
                 return;
             }
             _ => {}
+        }
+
+        // For GetNext, suppress results that have left the selected subtree
+        if response.operation == OperationType::GetNext
+            && let SnmpResult::Value(ref resp_oid, _) = response.result
+            && let Some(base_oid) = self.selected_oid()
+            && !resp_oid.components().starts_with(base_oid.components())
+        {
+            return;
         }
 
         self.push_result_entry(&response);
