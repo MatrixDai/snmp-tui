@@ -397,12 +397,20 @@ fn build_results_lines(app: &App) -> Vec<Line<'static>> {
 
         match &entry.result {
             ResultValue::Single(val) => {
-                lines.push(Line::from(vec![
-                    Span::styled("  ", value_style),
-                    Span::styled(entry.oid.clone(), oid_style),
-                    Span::styled(" = ", dim_style),
-                    Span::styled(val.clone(), value_style),
-                ]));
+                if entry.oid.is_empty() {
+                    // No OID (e.g. CONNECT/DISCONNECT) — just show the message
+                    lines.push(Line::from(vec![
+                        Span::styled("  ", value_style),
+                        Span::styled(val.clone(), value_style),
+                    ]));
+                } else {
+                    lines.push(Line::from(vec![
+                        Span::styled("  ", value_style),
+                        Span::styled(entry.oid.clone(), oid_style),
+                        Span::styled(" = ", dim_style),
+                        Span::styled(val.clone(), value_style),
+                    ]));
+                }
             }
             ResultValue::Multiple(pairs) => {
                 for (oid, val) in pairs {
