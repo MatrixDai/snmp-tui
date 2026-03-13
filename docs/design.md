@@ -71,7 +71,7 @@ Vertical (outer)
 - Scrollable log of SNMP operations and their responses
 - Each entry shows: operation type, OID, target device, and result value(s)
 - Newest entries at the bottom, auto-scroll on new results
-- Error responses displayed inline (e.g., `noSuchObject`, `timeout`)
+- Error responses displayed inline (e.g., `noSuchObject`, `noSuchInstance`, `timeout`)
 
 **Title Bar**
 - Centered app name: `snmp-cat`
@@ -185,7 +185,7 @@ struct App {
     results: ResultsState,     // log entries, scroll offset
     modal: Option<Modal>,      // active modal dialog
     connection: Option<DeviceConnection>,  // target device
-    mib_store: MibStore,       // arena-based OID tree (from mib-parser)
+    oid_tree: OidTree,          // arena-based OID tree (from mib-parser)
 }
 ```
 

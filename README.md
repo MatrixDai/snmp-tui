@@ -6,7 +6,7 @@ An interactive TUI tool for exploring SNMP MIB trees, querying, and configuring 
 
 - Browse MIB object trees interactively with keyboard navigation
 - Load standard and vendor MIB files (SMIv1 and SMIv2)
-- Query live devices using SNMP GET, GETNEXT, GETBULK, and WALK
+- Query live devices using SNMP GET, GETNEXT, and WALK (uses GETBULK internally for v2c/v3)
 - Set OID values on devices using SNMP SET (with type-aware input based on MIB SYNTAX)
 - View object details: syntax, access, status, description, OID path
 - Support for SNMP v1, v2c, and v3
@@ -19,7 +19,7 @@ An interactive TUI tool for exploring SNMP MIB trees, querying, and configuring 
 
 ```bash
 # Build from source
-git clone https://github.com/user/snmp-cat.git
+git clone https://github.com/MatrixDai/snmp-cat.git
 cd snmp-cat
 cargo build --release
 
@@ -37,7 +37,7 @@ snmp-cat --mib-dir /usr/share/snmp/mibs
 snmp-cat --mib-file /path/to/MY-MIB.txt
 
 # Connect to a device on startup
-snmp-cat --host 192.168.1.1 --community public
+snmp-cat --host 192.168.1.1 --community public --snmp-version 2c
 ```
 
 ### Config File
@@ -71,18 +71,40 @@ Standard RFC MIBs (SNMPv2-SMI, SNMPv2-TC, IF-MIB, etc.) are bundled with the app
 
 ## Key Bindings
 
+### Global
+
 | Key | Action |
 |-----|--------|
-| `j` / `k` | Navigate up/down in tree |
-| `Enter` | Expand/collapse tree node |
-| `Tab` | Cycle focus between panels |
+| `Tab` | Cycle focus to next panel |
+| `Shift+Tab` | Cycle focus to previous panel |
+| `c` | Open device connection dialog |
+| `/` | Search MIB tree by name |
+| `?` | Toggle help overlay |
+| `q` | Quit |
+
+### MIB Tree Panel
+
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | Move selection down |
+| `k` / `↑` | Move selection up |
+| `Enter` / `l` / `→` | Expand node / enter subtree |
+| `h` / `←` | Collapse node / go to parent |
 | `g` | SNMP GET on selected OID |
 | `w` | SNMP WALK from selected OID |
 | `n` | SNMP GETNEXT on selected OID |
-| `s` | SNMP SET on selected OID (prompts for value) |
-| `/` | Search MIB tree by name |
-| `c` | Configure device connection |
-| `q` | Quit |
+| `s` | SNMP SET on selected OID (opens modal) |
+| `G` | Jump to bottom of tree |
+| `gg` | Jump to top of tree |
+
+### Detail & Results Panels
+
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | Scroll down |
+| `k` / `↑` | Scroll up |
+| `G` | Jump to latest result (results panel) |
+| `y` | Copy selected result to clipboard (results panel) |
 
 ## License
 
