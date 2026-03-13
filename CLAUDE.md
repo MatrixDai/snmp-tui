@@ -38,6 +38,12 @@ Cargo workspace with 3 crates under `crates/`:
 | clap | CLI argument parsing |
 | serde + toml | Config file handling |
 
+## Workflow Rules
+
+- **One task at a time**: Work on a single task from `docs/tasks.md` per iteration. Do not start the next task until the current one is complete and verified.
+- **Branch per task**: Create a new branch for each task (e.g., `task/1.1-workspace-scaffolding`). Commit progress to the task branch after each iteration.
+- **Test instructions required**: After completing each task, provide clear, copy-pasteable test instructions (commands to run, expected output, what to check) so the work can be verified before moving on.
+
 ## MIB Parser Notes
 
 No existing pure-Rust MIB parser covers both SMIv1 and SMIv2 adequately. The `mib-parser` crate uses a custom pest grammar to handle:

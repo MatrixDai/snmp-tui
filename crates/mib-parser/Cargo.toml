@@ -1,0 +1,4 @@
+[package]
+name = "mib-parser"
+version.workspace = true
+edition.workspace = true

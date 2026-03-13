@@ -1,0 +1,4 @@
+[package]
+name = "snmp-client"
+version.workspace = true
+edition.workspace = true

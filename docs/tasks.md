@@ -35,7 +35,7 @@ Ordered task breakdown for building snmp-cat. Each milestone groups related task
 
 > Depends on: Milestone 1 (shared types)
 
-- [ ] **3.1** Add `snmp2` and `tokio` dependencies; define `SnmpConfig` struct (host, port, version, community, v3 credentials)
+- [ ] **3.1** Add `snmp2` and `tokio` dependencies; define `SnmpConfig` struct (host, port, version, community, timeout, retries, v3 credentials)
 - [ ] **3.2** Implement async `SnmpSession` wrapper — connect/create session from `SnmpConfig`
 - [ ] **3.3** Implement GET operation — `get(oid: &Oid) -> Result<SnmpValue>`
 - [ ] **3.4** Implement GETNEXT operation — `get_next(oid: &Oid) -> Result<(Oid, SnmpValue)>`
@@ -54,7 +54,7 @@ Ordered task breakdown for building snmp-cat. Each milestone groups related task
 > Depends on: Milestone 1
 
 - [ ] **4.1** Add dependencies: `ratatui`, `crossterm`, `clap`, `serde`, `toml`, `tokio`
-- [ ] **4.2** Define CLI args with clap: `--mib-dir`, `--mib-file`, `--host`, `--community`, `--version`
+- [ ] **4.2** Define CLI args with clap: `--mib-dir`, `--mib-file`, `--host`, `--port`, `--community`, `--snmp-version`, `--timeout`, `--retries`
 - [ ] **4.3** Implement config file loading from `~/.config/snmp-cat/config.toml` — merge with CLI args (CLI takes precedence)
 - [ ] **4.4** Terminal setup: enter alternate screen, enable raw mode; teardown on exit (including panic hook for clean restore)
 - [ ] **4.5** Event loop skeleton: `crossterm::event::poll(250ms)` → convert key events to `Message` → `update(&mut app, msg)` → `view(&app, &mut frame)`
@@ -72,7 +72,7 @@ Ordered task breakdown for building snmp-cat. Each milestone groups related task
 > Depends on: Milestone 2 (OID tree), Milestone 4 (TUI shell)
 
 - [ ] **5.1** Build `TreeState` — tracks: selected index, expanded set (`HashSet<NodeIndex>`), scroll offset, flattened visible-node list
-- [ ] **5.2** Render tree widget from `OidTree` — iterate visible nodes, indent by depth, prefix with `▸` (collapsed, has children) / `▾` (expanded) / space (leaf), display as `name(subid)`
+- [ ] **5.2** Render tree widget from `OidTree` — iterate visible nodes, indent by depth, prefix with `▸` (collapsed, has children) / `▾` (expanded) / space (leaf); branch nodes display as `name(subid)`, leaf nodes display as just `name`
 - [ ] **5.3** Keyboard navigation: `j`/`↓` move selection down, `k`/`↑` move selection up in flattened list
 - [ ] **5.4** Expand/collapse: `Enter`/`l`/`→` expands or enters; `h`/`←` collapses or moves to parent
 - [ ] **5.5** Scroll viewport when selection moves beyond visible area
