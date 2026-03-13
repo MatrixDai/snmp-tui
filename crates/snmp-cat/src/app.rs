@@ -4,6 +4,7 @@ use mib_parser::OidTree;
 use snmp_client::{OperationType, SnmpRequest, SnmpResponse, SnmpResult, SnmpWorker};
 use tokio::sync::mpsc;
 
+use crate::modal::{ConnectModal, Modal, SearchModal, SetModal};
 use crate::tree_state::TreeState;
 
 /// Which panel currently has focus.
@@ -60,6 +61,20 @@ pub enum Message {
     SnmpGet,
     SnmpGetNext,
     SnmpWalk,
+
+    // Modal dialogs
+    OpenConnectModal,
+    OpenSetModal,
+    OpenSearchModal,
+    ModalClose,
+    ModalConfirm,
+    ModalTabNext,
+    ModalTabPrev,
+    ModalChar(char),
+    ModalBackspace,
+    ModalCycle,
+    ModalDown,
+    ModalUp,
 
     // Prefix key handling
     /// First `g` press — wait for second key
@@ -216,6 +231,8 @@ pub struct App {
     pub results_state: ResultsState,
     pub connection: ConnectionState,
     pub running: bool,
+    /// Active modal dialog, if any.
+    pub modal: Option<Modal>,
     /// Whether an SNMP operation is currently in-flight.
     pub inflight_op: Option<OperationType>,
     /// Track the previously selected tree node to detect changes.
@@ -239,6 +256,7 @@ impl App {
             results_state: ResultsState::new(),
             connection: ConnectionState::Disconnected,
             running: true,
+            modal: None,
             inflight_op: None,
             prev_selected_node: None,
             worker: None,
@@ -364,11 +382,157 @@ impl App {
         // Auto-scroll will be applied in draw
     }
 
+    /// Open the SET modal for the currently selected OID.
+    fn open_set_modal(&mut self) {
+        let node_idx = match self.tree_state.selected_node() {
+            Some(idx) => idx,
+            None => return,
+        };
+        let node = match self.oid_tree.get(node_idx) {
+            Some(n) => n,
+            None => return,
+        };
+        let oid = self
+            .oid_tree
+            .resolve_oid(node_idx)
+            .map(|o| o.to_string())
+            .unwrap_or_default();
+        let name = node.name.clone();
+        let syntax = node.mib_object.as_ref().and_then(|m| m.syntax.clone());
+        // A node is scalar-ish if it has no children (leaf node)
+        let is_scalar = node.children.is_empty();
+        self.modal = Some(Modal::Set(SetModal::new(oid, name, syntax, is_scalar)));
+    }
+
+    /// Handle SET modal confirmation.
+    fn confirm_set(&mut self) {
+        let (oid_str, value) = {
+            let set_modal = match &self.modal {
+                Some(Modal::Set(m)) => m,
+                _ => return,
+            };
+            let value = match set_modal.build_value() {
+                Some(v) => v,
+                None => return,
+            };
+            (set_modal.effective_oid(), value)
+        };
+
+        if !matches!(self.connection, ConnectionState::Connected { .. }) {
+            return;
+        }
+
+        // Parse OID string to Oid
+        let components: Vec<u32> = oid_str.split('.').filter_map(|p| p.parse().ok()).collect();
+        if components.is_empty() {
+            return;
+        }
+        let oid = mib_parser::Oid::new(components);
+
+        if let Some(ref worker) = self.worker {
+            let request = SnmpRequest::Set { oid, value };
+            if worker.try_send(request).is_ok() {
+                self.inflight_op = Some(OperationType::Set);
+            }
+        }
+        self.modal = None;
+    }
+
+    /// Handle search modal confirmation — navigate to the selected result.
+    fn confirm_search(&mut self) {
+        let target = {
+            let search_modal = match &self.modal {
+                Some(Modal::Search(m)) => m,
+                _ => return,
+            };
+            search_modal.selected_node()
+        };
+
+        if let Some(node_idx) = target {
+            self.tree_state.navigate_to(node_idx, &self.oid_tree);
+        }
+        self.modal = None;
+    }
+
     /// Process a message and update application state.
     pub fn update(&mut self, msg: Message) {
         // Clear pending_g on any message that isn't PrefixG
         if !matches!(msg, Message::PrefixG) {
             self.tree_state.pending_g = false;
+        }
+
+        // Handle modal messages
+        match &msg {
+            Message::ModalClose => {
+                self.modal = None;
+                return;
+            }
+            Message::ModalConfirm => {
+                match &self.modal {
+                    Some(Modal::Connect(m)) => {
+                        if let Some(config) = m.build_config() {
+                            self.connect(config);
+                        }
+                        self.modal = None;
+                    }
+                    Some(Modal::Set(_)) => self.confirm_set(),
+                    Some(Modal::Search(_)) => self.confirm_search(),
+                    None => {}
+                }
+                return;
+            }
+            _ => {}
+        }
+
+        // Route input to modal if active
+        if self.modal.is_some() {
+            match msg {
+                Message::ModalTabNext => {
+                    if let Some(Modal::Connect(m)) = &mut self.modal {
+                        m.focus_next();
+                    }
+                }
+                Message::ModalTabPrev => {
+                    if let Some(Modal::Connect(m)) = &mut self.modal {
+                        m.focus_prev();
+                    }
+                }
+                Message::ModalChar(c) => match &mut self.modal {
+                    Some(Modal::Connect(m)) => m.type_char(c),
+                    Some(Modal::Set(m)) => m.type_char(c),
+                    Some(Modal::Search(m)) => {
+                        let tree = &self.oid_tree;
+                        m.type_char(c, tree);
+                    }
+                    None => {}
+                },
+                Message::ModalBackspace => match &mut self.modal {
+                    Some(Modal::Connect(m)) => m.backspace(),
+                    Some(Modal::Set(m)) => m.backspace(),
+                    Some(Modal::Search(m)) => {
+                        let tree = &self.oid_tree;
+                        m.backspace(tree);
+                    }
+                    None => {}
+                },
+                Message::ModalCycle => {
+                    if let Some(Modal::Connect(m)) = &mut self.modal {
+                        m.cycle_field();
+                    }
+                }
+                Message::ModalDown => {
+                    if let Some(Modal::Search(m)) = &mut self.modal {
+                        m.select_next();
+                    }
+                }
+                Message::ModalUp => {
+                    if let Some(Modal::Search(m)) = &mut self.modal {
+                        m.select_prev();
+                    }
+                }
+                _ => {}
+            }
+            return;
         }
 
         match msg {
@@ -420,6 +584,15 @@ impl App {
             Message::SnmpWalk => {
                 self.send_snmp_request(SnmpRequest::Walk);
             }
+            Message::OpenConnectModal => {
+                self.modal = Some(Modal::Connect(ConnectModal::new()));
+            }
+            Message::OpenSetModal => {
+                self.open_set_modal();
+            }
+            Message::OpenSearchModal => {
+                self.modal = Some(Modal::Search(SearchModal::new()));
+            }
             Message::PrefixG => {
                 self.tree_state.pending_g = true;
             }
@@ -427,6 +600,8 @@ impl App {
                 self.running = false;
             }
             Message::Tick => {}
+            // Modal messages are handled above before this match block
+            _ => {}
         }
 
         // Reset detail scroll when selected node changes

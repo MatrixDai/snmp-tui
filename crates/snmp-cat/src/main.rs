@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod event;
+mod modal;
 mod tree_state;
 mod ui;
 

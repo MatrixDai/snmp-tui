@@ -3,6 +3,7 @@ use std::time::Duration;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{App, FocusedPanel, Message};
+use crate::modal::Modal;
 
 /// Poll for crossterm events and convert to application Messages.
 /// Returns None if no event is available within the timeout.
@@ -21,6 +22,11 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
         return None;
     }
 
+    // If a modal is active, route all input to the modal handler
+    if app.modal.is_some() {
+        return handle_modal_key(key, app);
+    }
+
     // Handle `gg` sequence: if `g` was pending and we get another `g`, jump to top
     if app.tree_state.pending_g
         && app.focused == FocusedPanel::Tree
@@ -34,6 +40,8 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
     // Global keys (always active)
     match key.code {
         KeyCode::Char('q') => return Some(Message::Quit),
+        KeyCode::Char('c') => return Some(Message::OpenConnectModal),
+        KeyCode::Char('/') => return Some(Message::OpenSearchModal),
         KeyCode::Tab => {
             return if key.modifiers.contains(KeyModifiers::SHIFT) {
                 Some(Message::FocusPrev)
@@ -53,6 +61,43 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
     }
 }
 
+fn handle_modal_key(key: KeyEvent, app: &App) -> Option<Message> {
+    match key.code {
+        KeyCode::Esc => Some(Message::ModalClose),
+        KeyCode::Enter => {
+            // In connect modal, if focused on a cycle field, cycle it instead of confirming
+            if let Some(Modal::Connect(m)) = &app.modal
+                && matches!(
+                    m.fields[m.focused_field].kind,
+                    crate::modal::FieldKind::Cycle(_)
+                )
+            {
+                return Some(Message::ModalCycle);
+            }
+            Some(Message::ModalConfirm)
+        }
+        KeyCode::Tab => {
+            if key.modifiers.contains(KeyModifiers::SHIFT) {
+                Some(Message::ModalTabPrev)
+            } else {
+                Some(Message::ModalTabNext)
+            }
+        }
+        KeyCode::BackTab => Some(Message::ModalTabPrev),
+        KeyCode::Backspace => Some(Message::ModalBackspace),
+        KeyCode::Down => Some(Message::ModalDown),
+        KeyCode::Up => Some(Message::ModalUp),
+        KeyCode::Char(c) => {
+            // Ctrl+Enter to confirm from any field in connect modal
+            if c == '\n' || (c == 'm' && key.modifiers.contains(KeyModifiers::CONTROL)) {
+                return Some(Message::ModalConfirm);
+            }
+            Some(Message::ModalChar(c))
+        }
+        _ => None,
+    }
+}
+
 fn handle_tree_key(key: KeyEvent) -> Option<Message> {
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => Some(Message::TreeDown),
@@ -65,6 +110,7 @@ fn handle_tree_key(key: KeyEvent) -> Option<Message> {
         KeyCode::Char(' ') => Some(Message::SnmpGet),
         KeyCode::Char('n') => Some(Message::SnmpGetNext),
         KeyCode::Char('w') => Some(Message::SnmpWalk),
+        KeyCode::Char('s') => Some(Message::OpenSetModal),
         _ => None,
     }
 }

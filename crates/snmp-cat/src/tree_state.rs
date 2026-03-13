@@ -177,6 +177,34 @@ impl TreeState {
     pub fn is_expanded(&self, idx: NodeIndex) -> bool {
         self.expanded.contains(&idx)
     }
+
+    /// Navigate to a specific node: expand all ancestors and select it.
+    pub fn navigate_to(&mut self, target: NodeIndex, tree: &OidTree) {
+        // Walk up from target to root, collecting ancestors
+        let mut ancestors = Vec::new();
+        let mut current = target;
+        while let Some(node) = tree.get(current) {
+            if let Some(parent) = node.parent {
+                ancestors.push(parent);
+                current = parent;
+            } else {
+                break;
+            }
+        }
+
+        // Expand all ancestors
+        for ancestor in ancestors {
+            self.expanded.insert(ancestor);
+        }
+
+        // Rebuild visible list
+        self.rebuild_visible(tree);
+
+        // Find target in visible list and select it
+        if let Some(pos) = self.visible.iter().position(|&(idx, _)| idx == target) {
+            self.selected = pos;
+        }
+    }
 }
 
 #[cfg(test)]

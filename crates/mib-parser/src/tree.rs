@@ -7,6 +7,13 @@ use crate::types::MibObject;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeIndex(usize);
 
+impl NodeIndex {
+    /// Create a NodeIndex from a raw index (for iteration).
+    pub fn from_raw(index: usize) -> Self {
+        Self(index)
+    }
+}
+
 /// A node in the OID tree.
 #[derive(Debug, Clone)]
 pub struct Node {

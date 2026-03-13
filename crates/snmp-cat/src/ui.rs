@@ -4,9 +4,10 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::app::{App, ConnectionState, FocusedPanel, ResultValue};
+use crate::modal::Modal;
 
 /// Render the entire application UI.
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -22,6 +23,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_title_bar(frame, outer[0], app);
     draw_main_area(frame, outer[1], app);
     draw_status_bar(frame, outer[2], app);
+
+    // Render modal overlay if active
+    if app.modal.is_some() {
+        draw_modal(frame, app);
+    }
 }
 
 fn draw_title_bar(frame: &mut Frame, area: Rect, app: &App) {
@@ -462,14 +468,245 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let hints = match app.focused {
-        FocusedPanel::Tree => {
-            "[Tab] Switch  [j/k] Navigate  [Enter] Expand  [h/l] Collapse/Expand  [gg/G] Top/Bottom  [Space] GET  [n] GETNEXT  [w] WALK  [q] Quit"
+    let hints = if app.modal.is_some() {
+        "[Esc] Cancel  [Tab] Next field  [Enter] Confirm/Cycle"
+    } else {
+        match app.focused {
+            FocusedPanel::Tree => {
+                "[Tab] Switch  [j/k] Navigate  [Enter] Expand  [Space] GET  [n] GETNEXT  [w] WALK  [s] SET  [c] Connect  [/] Search  [q] Quit"
+            }
+            FocusedPanel::Detail => "[Tab] Switch  [j/k] Scroll  [c] Connect  [/] Search  [q] Quit",
+            FocusedPanel::Results => {
+                "[Tab] Switch  [j/k] Scroll  [G] Latest  [c] Connect  [/] Search  [q] Quit"
+            }
         }
-        FocusedPanel::Detail => "[Tab] Switch  [j/k] Scroll  [q] Quit",
-        FocusedPanel::Results => "[Tab] Switch  [j/k] Scroll  [G] Latest  [q] Quit",
     };
 
     let status = Line::from(Span::styled(hints, Style::default().fg(Color::Gray)));
     frame.render_widget(Paragraph::new(status), area);
+}
+
+// ============================================================
+// Modal rendering
+// ============================================================
+
+/// Compute a centered rectangle with given width/height percentages.
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
+fn draw_modal(frame: &mut Frame, app: &App) {
+    match &app.modal {
+        Some(Modal::Connect(m)) => draw_connect_modal(frame, m),
+        Some(Modal::Set(m)) => draw_set_modal(frame, m),
+        Some(Modal::Search(m)) => draw_search_modal(frame, m),
+        None => {}
+    }
+}
+
+fn draw_connect_modal(frame: &mut Frame, modal: &crate::modal::ConnectModal) {
+    let area = centered_rect(50, 60, frame.area());
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(" Connect to Device ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let label_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let value_style = Style::default().fg(Color::White);
+    let focused_style = Style::default().fg(Color::Yellow).bg(Color::DarkGray);
+    let dim_style = Style::default().fg(Color::Gray);
+
+    let visible = modal.visible_fields();
+    let mut lines: Vec<Line> = Vec::new();
+
+    for &field_idx in &visible {
+        let field = &modal.fields[field_idx];
+        let is_focused = field_idx == modal.focused_field;
+
+        let value_display = if is_focused {
+            format!("{}_", field.value)
+        } else {
+            field.value.clone()
+        };
+
+        let cycle_hint = if matches!(field.kind, crate::modal::FieldKind::Cycle(_)) {
+            " [Enter to cycle]"
+        } else {
+            ""
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {:15}", field.label), label_style),
+            Span::styled(
+                value_display,
+                if is_focused {
+                    focused_style
+                } else {
+                    value_style
+                },
+            ),
+            Span::styled(cycle_hint, dim_style),
+        ]));
+        lines.push(Line::from(""));
+    }
+
+    // Add hint at bottom
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  [Tab] Next field  [Enter] Cycle/Confirm  [Esc] Cancel",
+        dim_style,
+    )));
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn draw_set_modal(frame: &mut Frame, modal: &crate::modal::SetModal) {
+    let area = centered_rect(60, 50, frame.area());
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(" SNMP SET ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let label_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let value_style = Style::default().fg(Color::White);
+    let focused_style = Style::default().fg(Color::Yellow).bg(Color::DarkGray);
+    let dim_style = Style::default().fg(Color::Gray);
+
+    let oid_display = if modal.is_scalar {
+        format!("{} (will send as {}.0)", modal.oid, modal.oid)
+    } else {
+        modal.oid.clone()
+    };
+
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("  Name:    ", label_style),
+            Span::styled(modal.name.clone(), value_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  OID:     ", label_style),
+            Span::styled(oid_display, value_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  Type:    ", label_style),
+            Span::styled(modal.syntax_label.clone(), value_style),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Value:   ", label_style),
+            Span::styled(format!("{}_", modal.value_input), focused_style),
+        ]),
+        Line::from(vec![
+            Span::styled("           ", label_style),
+            Span::styled(modal.value_hint.clone(), dim_style),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled("  [Enter] Send SET  [Esc] Cancel", dim_style)),
+    ];
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn draw_search_modal(frame: &mut Frame, modal: &crate::modal::SearchModal) {
+    let area = centered_rect(60, 70, frame.area());
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(" Search MIB Objects ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let label_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let value_style = Style::default().fg(Color::White);
+    let focused_style = Style::default().fg(Color::Yellow).bg(Color::DarkGray);
+    let selected_style = Style::default().fg(Color::Black).bg(Color::Cyan);
+    let dim_style = Style::default().fg(Color::Gray);
+    let oid_style = Style::default().fg(Color::Gray);
+
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("  Search:  ", label_style),
+            Span::styled(format!("{}_", modal.query), focused_style),
+        ]),
+        Line::from(""),
+    ];
+
+    if modal.results.is_empty() {
+        if modal.query.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  Type to search MIB object names",
+                dim_style,
+            )));
+        } else {
+            lines.push(Line::from(Span::styled("  No matches found", dim_style)));
+        }
+    } else {
+        lines.push(Line::from(Span::styled(
+            format!("  {} match(es):", modal.results.len()),
+            dim_style,
+        )));
+        lines.push(Line::from(""));
+
+        for (i, result) in modal.results.iter().enumerate() {
+            let is_selected = i == modal.selected;
+            let style = if is_selected {
+                selected_style
+            } else {
+                value_style
+            };
+            let prefix = if is_selected { "> " } else { "  " };
+
+            lines.push(Line::from(vec![
+                Span::styled(format!("{}{}", prefix, result.name), style),
+                Span::styled(format!("  ({})", result.oid), oid_style),
+            ]));
+        }
+    }
+
+    // Hint at bottom
+    let viewport_height = inner.height as usize;
+    while lines.len() < viewport_height.saturating_sub(1) {
+        lines.push(Line::from(""));
+    }
+    lines.push(Line::from(Span::styled(
+        "  [Enter] Navigate to  [Up/Down] Select  [Esc] Cancel",
+        dim_style,
+    )));
+
+    // Truncate to viewport
+    lines.truncate(viewport_height);
+
+    frame.render_widget(Paragraph::new(lines), inner);
 }
