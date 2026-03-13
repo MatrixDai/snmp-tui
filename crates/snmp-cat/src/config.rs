@@ -127,6 +127,27 @@ pub fn merge_config(file: FileConfig, cli: &CliArgs) -> AppConfig {
     }
 }
 
+/// Convert AppConfig to snmp_client::SnmpConfig for connecting to a device.
+pub fn to_snmp_config(app_config: &AppConfig) -> Option<snmp_client::SnmpConfig> {
+    let host = app_config.host.as_ref()?;
+
+    let version = match app_config.snmp_version.as_str() {
+        "1" | "v1" => snmp_client::SnmpVersion::V1,
+        "3" | "v3" => snmp_client::SnmpVersion::V3,
+        _ => snmp_client::SnmpVersion::V2c,
+    };
+
+    Some(snmp_client::SnmpConfig {
+        host: host.clone(),
+        port: app_config.port,
+        version,
+        community: app_config.community.clone(),
+        timeout_ms: app_config.timeout_ms,
+        retries: app_config.retries,
+        v3_credentials: None,
+    })
+}
+
 fn dirs_config_path() -> Option<PathBuf> {
     dirs_path().map(|p| p.join("config.toml"))
 }

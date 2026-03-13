@@ -1,6 +1,8 @@
 use std::time::SystemTime;
 
 use mib_parser::OidTree;
+use snmp_client::{OperationType, SnmpRequest, SnmpResponse, SnmpResult, SnmpWorker};
+use tokio::sync::mpsc;
 
 use crate::tree_state::TreeState;
 
@@ -54,6 +56,11 @@ pub enum Message {
     ResultsScrollDown,
     ResultsJumpBottom,
 
+    // SNMP operations
+    SnmpGet,
+    SnmpGetNext,
+    SnmpWalk,
+
     // Prefix key handling
     /// First `g` press — wait for second key
     PrefixG,
@@ -70,6 +77,8 @@ pub struct DetailState {
     pub scroll_offset: usize,
     /// Total number of rendered lines (updated each frame).
     pub total_lines: usize,
+    /// Viewport height (updated each frame from draw).
+    pub viewport_height: usize,
 }
 
 impl DetailState {
@@ -77,6 +86,7 @@ impl DetailState {
         Self {
             scroll_offset: 0,
             total_lines: 0,
+            viewport_height: 0,
         }
     }
 
@@ -86,9 +96,10 @@ impl DetailState {
         }
     }
 
-    pub fn scroll_down(&mut self, viewport_height: usize) {
-        if self.total_lines > viewport_height
-            && self.scroll_offset < self.total_lines - viewport_height
+    pub fn scroll_down(&mut self) {
+        if self.viewport_height > 0
+            && self.total_lines > self.viewport_height
+            && self.scroll_offset < self.total_lines - self.viewport_height
         {
             self.scroll_offset += 1;
         }
@@ -100,33 +111,10 @@ impl DetailState {
     }
 }
 
-/// Operation type for result entries.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum ResultOperation {
-    Get,
-    GetNext,
-    GetBulk,
-    Walk,
-    Set,
-}
-
-impl std::fmt::Display for ResultOperation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Get => write!(f, "GET"),
-            Self::GetNext => write!(f, "GETNEXT"),
-            Self::GetBulk => write!(f, "GETBULK"),
-            Self::Walk => write!(f, "WALK"),
-            Self::Set => write!(f, "SET"),
-        }
-    }
-}
-
 /// A single result entry in the results panel log.
 #[derive(Debug, Clone)]
 pub struct ResultEntry {
-    pub operation: ResultOperation,
+    pub operation: OperationType,
     pub oid: String,
     pub target: String,
     pub result: ResultValue,
@@ -135,7 +123,6 @@ pub struct ResultEntry {
 
 /// The value or error in a result entry.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum ResultValue {
     /// Single value result (GET, GETNEXT, SET confirmation).
     Single(String),
@@ -152,6 +139,8 @@ pub struct ResultsState {
     pub scroll_offset: usize,
     /// Total number of rendered lines (updated each frame).
     pub total_lines: usize,
+    /// Viewport height (updated each frame from draw).
+    pub viewport_height: usize,
     /// Whether auto-scroll is active (scroll to bottom on new entries).
     pub auto_scroll: bool,
 }
@@ -162,6 +151,7 @@ impl ResultsState {
             entries: Vec::new(),
             scroll_offset: 0,
             total_lines: 0,
+            viewport_height: 0,
             auto_scroll: true,
         }
     }
@@ -173,33 +163,46 @@ impl ResultsState {
         }
     }
 
-    pub fn scroll_down(&mut self, viewport_height: usize) {
-        if self.total_lines > viewport_height
-            && self.scroll_offset < self.total_lines - viewport_height
+    pub fn scroll_down(&mut self) {
+        if self.viewport_height > 0
+            && self.total_lines > self.viewport_height
+            && self.scroll_offset < self.total_lines - self.viewport_height
         {
             self.scroll_offset += 1;
         }
         // Re-enable auto-scroll if we're at the bottom
-        if self.total_lines <= viewport_height
-            || self.scroll_offset >= self.total_lines - viewport_height
+        if self.viewport_height > 0
+            && (self.total_lines <= self.viewport_height
+                || self.scroll_offset >= self.total_lines - self.viewport_height)
         {
             self.auto_scroll = true;
         }
     }
 
-    pub fn jump_bottom(&mut self, viewport_height: usize) {
-        if self.total_lines > viewport_height {
-            self.scroll_offset = self.total_lines - viewport_height;
+    pub fn jump_bottom(&mut self) {
+        if self.viewport_height > 0 && self.total_lines > self.viewport_height {
+            self.scroll_offset = self.total_lines - self.viewport_height;
         }
         self.auto_scroll = true;
     }
+}
 
-    #[allow(dead_code)]
-    pub fn push_entry(&mut self, entry: ResultEntry, viewport_height: usize) {
-        self.entries.push(entry);
-        if self.auto_scroll {
-            // Will be recalculated on next render; set to max for now
-            self.jump_bottom(viewport_height);
+/// Connection state for the SNMP device.
+#[derive(Debug, Clone)]
+pub enum ConnectionState {
+    Disconnected,
+    Connecting,
+    Connected { host: String, version: String },
+    Error(String),
+}
+
+impl std::fmt::Display for ConnectionState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Disconnected => write!(f, "No device"),
+            Self::Connecting => write!(f, "Connecting..."),
+            Self::Connected { host, version } => write!(f, "{} {}", host, version),
+            Self::Error(e) => write!(f, "Error: {}", e),
         }
     }
 }
@@ -211,9 +214,18 @@ pub struct App {
     pub tree_state: TreeState,
     pub detail_state: DetailState,
     pub results_state: ResultsState,
+    pub connection: ConnectionState,
     pub running: bool,
+    /// Whether an SNMP operation is currently in-flight.
+    pub inflight_op: Option<OperationType>,
     /// Track the previously selected tree node to detect changes.
     prev_selected_node: Option<mib_parser::NodeIndex>,
+    /// SNMP worker handle for sending requests.
+    worker: Option<SnmpWorker>,
+    /// Receiver for SNMP responses from the background worker.
+    pub response_rx: Option<mpsc::Receiver<SnmpResponse>>,
+    /// Pending connect info (host, version) for when connection response arrives.
+    pending_connect_info: Option<(String, String)>,
 }
 
 impl App {
@@ -225,9 +237,131 @@ impl App {
             tree_state,
             detail_state: DetailState::new(),
             results_state: ResultsState::new(),
+            connection: ConnectionState::Disconnected,
             running: true,
+            inflight_op: None,
             prev_selected_node: None,
+            worker: None,
+            response_rx: None,
+            pending_connect_info: None,
         }
+    }
+
+    /// Initialize the SNMP worker (must be called from a tokio context).
+    pub fn init_worker(&mut self) {
+        let (worker, response_rx) = SnmpWorker::spawn();
+        self.worker = Some(worker);
+        self.response_rx = Some(response_rx);
+    }
+
+    /// Send a connect request to the SNMP worker.
+    pub fn connect(&mut self, config: snmp_client::SnmpConfig) {
+        let host = config.destination();
+        let version = config.version.to_string();
+        self.connection = ConnectionState::Connecting;
+        self.inflight_op = Some(OperationType::Connect);
+        if let Some(ref worker) = self.worker {
+            let _ = worker.try_send(SnmpRequest::Connect(config));
+        }
+        // Store host/version for use when response arrives
+        self.pending_connect_info = Some((host, version));
+    }
+
+    /// Send an SNMP request for the currently selected OID.
+    fn send_snmp_request(&mut self, request_fn: impl FnOnce(mib_parser::Oid) -> SnmpRequest) {
+        if self.inflight_op.is_some() {
+            return; // Don't stack requests
+        }
+        if !matches!(self.connection, ConnectionState::Connected { .. }) {
+            return; // Not connected
+        }
+        let oid = match self.selected_oid() {
+            Some(oid) => oid,
+            None => return,
+        };
+        if let Some(ref worker) = self.worker {
+            let request = request_fn(oid);
+            let op = match &request {
+                SnmpRequest::Get(_) => OperationType::Get,
+                SnmpRequest::GetNext(_) => OperationType::GetNext,
+                SnmpRequest::Walk(_) => OperationType::Walk,
+                _ => return,
+            };
+            if worker.try_send(request).is_ok() {
+                self.inflight_op = Some(op);
+            }
+        }
+    }
+
+    /// Get the OID of the currently selected tree node.
+    fn selected_oid(&self) -> Option<mib_parser::Oid> {
+        let node_idx = self.tree_state.selected_node()?;
+        self.oid_tree.resolve_oid(node_idx)
+    }
+
+    /// Handle an SNMP response from the background worker.
+    pub fn handle_snmp_response(&mut self, response: SnmpResponse) {
+        self.inflight_op = None;
+
+        // Handle connect/disconnect responses specially
+        match response.operation {
+            OperationType::Connect => {
+                match &response.result {
+                    SnmpResult::Ok(_) => {
+                        if let Some((host, version)) = self.pending_connect_info.take() {
+                            self.connection = ConnectionState::Connected { host, version };
+                        }
+                    }
+                    SnmpResult::Error(e) => {
+                        self.connection = ConnectionState::Error(e.clone());
+                        self.pending_connect_info = None;
+                    }
+                    _ => {}
+                }
+                self.push_result_entry(&response);
+                return;
+            }
+            OperationType::Disconnect => {
+                self.connection = ConnectionState::Disconnected;
+                self.push_result_entry(&response);
+                return;
+            }
+            _ => {}
+        }
+
+        self.push_result_entry(&response);
+    }
+
+    /// Convert an SnmpResponse to a ResultEntry and push it to the results panel.
+    fn push_result_entry(&mut self, response: &SnmpResponse) {
+        let target = match &self.connection {
+            ConnectionState::Connected { host, .. } => host.clone(),
+            _ => "N/A".to_string(),
+        };
+
+        let result = match &response.result {
+            SnmpResult::Value(oid, value) => ResultValue::Single(format!("{} = {}", oid, value)),
+            SnmpResult::MultiValue(pairs) => {
+                let formatted: Vec<(String, String)> = pairs
+                    .iter()
+                    .map(|(oid, val)| (oid.to_string(), val.to_string()))
+                    .collect();
+                ResultValue::Multiple(formatted)
+            }
+            SnmpResult::Ok(msg) => ResultValue::Single(msg.clone()),
+            SnmpResult::Error(e) => ResultValue::Error(e.clone()),
+        };
+
+        let entry = ResultEntry {
+            operation: response.operation,
+            oid: response.request_oid.to_string(),
+            target,
+            result,
+            timestamp: SystemTime::now(),
+        };
+
+        self.results_state.entries.push(entry);
+        // Auto-scroll will be applied in draw
     }
 
     /// Process a message and update application state.
@@ -266,17 +400,25 @@ impl App {
                 self.detail_state.scroll_up();
             }
             Message::DetailScrollDown => {
-                // viewport_height not known here; scroll_down will cap at total_lines
-                self.detail_state.scroll_down(usize::MAX);
+                self.detail_state.scroll_down();
             }
             Message::ResultsScrollUp => {
                 self.results_state.scroll_up();
             }
             Message::ResultsScrollDown => {
-                self.results_state.scroll_down(usize::MAX);
+                self.results_state.scroll_down();
             }
             Message::ResultsJumpBottom => {
-                self.results_state.jump_bottom(usize::MAX);
+                self.results_state.jump_bottom();
+            }
+            Message::SnmpGet => {
+                self.send_snmp_request(SnmpRequest::Get);
+            }
+            Message::SnmpGetNext => {
+                self.send_snmp_request(SnmpRequest::GetNext);
+            }
+            Message::SnmpWalk => {
+                self.send_snmp_request(SnmpRequest::Walk);
             }
             Message::PrefixG => {
                 self.tree_state.pending_g = true;
@@ -314,8 +456,9 @@ mod tests {
     fn detail_state_scroll() {
         let mut state = DetailState::new();
         state.total_lines = 20;
+        state.viewport_height = 10;
 
-        state.scroll_down(10);
+        state.scroll_down();
         assert_eq!(state.scroll_offset, 1);
 
         state.scroll_up();
@@ -344,26 +487,54 @@ mod tests {
     #[test]
     fn results_state_auto_scroll() {
         let mut state = ResultsState::new();
+        state.viewport_height = 10;
         assert!(state.auto_scroll);
 
         state.total_lines = 30;
-        state.scroll_up(); // No-op at 0, but disables auto_scroll... only if offset > 0
-        // scroll_up does nothing when offset is 0
-        assert!(state.auto_scroll); // still true since offset didn't change
-
         state.scroll_offset = 5;
         state.scroll_up();
         assert!(!state.auto_scroll);
 
-        state.jump_bottom(10);
+        state.jump_bottom();
         assert!(state.auto_scroll);
         assert_eq!(state.scroll_offset, 20);
     }
 
     #[test]
-    fn result_operation_display() {
-        assert_eq!(format!("{}", ResultOperation::Get), "GET");
-        assert_eq!(format!("{}", ResultOperation::Walk), "WALK");
-        assert_eq!(format!("{}", ResultOperation::Set), "SET");
+    fn connection_state_display() {
+        assert_eq!(format!("{}", ConnectionState::Disconnected), "No device");
+        assert_eq!(
+            format!(
+                "{}",
+                ConnectionState::Connected {
+                    host: "192.168.1.1:161".to_string(),
+                    version: "v2c".to_string()
+                }
+            ),
+            "192.168.1.1:161 v2c"
+        );
+    }
+
+    #[test]
+    fn result_entry_push() {
+        let tree = make_test_tree();
+        let mut app = App::new(tree);
+        app.connection = ConnectionState::Connected {
+            host: "10.0.0.1:161".to_string(),
+            version: "v2c".to_string(),
+        };
+
+        let response = SnmpResponse::error(
+            OperationType::Get,
+            Oid::new(vec![1, 3, 6, 1]),
+            "timeout".to_string(),
+        );
+        app.push_result_entry(&response);
+
+        assert_eq!(app.results_state.entries.len(), 1);
+        assert!(matches!(
+            app.results_state.entries[0].result,
+            ResultValue::Error(_)
+        ));
     }
 }

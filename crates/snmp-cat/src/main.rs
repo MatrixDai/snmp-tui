@@ -17,7 +17,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use app::App;
-use config::{CliArgs, load_config_file, merge_config};
+use config::{CliArgs, load_config_file, merge_config, to_snmp_config};
 
 fn main() -> io::Result<()> {
     let cli = CliArgs::parse();
@@ -26,6 +26,9 @@ fn main() -> io::Result<()> {
 
     // Load MIBs
     let oid_tree = load_mibs(&app_config);
+
+    // Build SNMP config if host is provided (for auto-connect)
+    let snmp_config = to_snmp_config(&app_config);
 
     // Setup terminal
     let mut terminal = setup_terminal()?;
@@ -37,8 +40,11 @@ fn main() -> io::Result<()> {
         original_hook(panic_info);
     }));
 
-    // Run application
-    let result = run(&mut terminal, oid_tree);
+    // Create tokio runtime for SNMP worker
+    let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
+
+    // Run application within tokio context
+    let result = runtime.block_on(async { run(&mut terminal, oid_tree, snmp_config).await });
 
     // Restore terminal
     restore_terminal()?;
@@ -60,16 +66,34 @@ fn restore_terminal() -> io::Result<()> {
     Ok(())
 }
 
-fn run(
+async fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     oid_tree: mib_parser::OidTree,
+    snmp_config: Option<snmp_client::SnmpConfig>,
 ) -> io::Result<()> {
     let mut app = App::new(oid_tree);
+
+    // Initialize SNMP worker
+    app.init_worker();
+
+    // Auto-connect if host was provided via CLI/config
+    if let Some(config) = snmp_config {
+        app.connect(config);
+    }
 
     while app.running {
         terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
-        if let Some(msg) = event::poll_event(Duration::from_millis(250), &app) {
+        // Check for SNMP responses (non-blocking)
+        // Take the receiver out to avoid double-borrow of app
+        if let Some(mut rx) = app.response_rx.take() {
+            while let Ok(response) = rx.try_recv() {
+                app.handle_snmp_response(response);
+            }
+            app.response_rx = Some(rx);
+        }
+
+        if let Some(msg) = event::poll_event(Duration::from_millis(100), &app) {
             app.update(msg);
         }
     }
