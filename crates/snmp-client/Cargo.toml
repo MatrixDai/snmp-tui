@@ -2,3 +2,9 @@
 name = "snmp-client"
 version.workspace = true
 edition.workspace = true
+
+[dependencies]
+snmp2.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+mib-parser.workspace = true
