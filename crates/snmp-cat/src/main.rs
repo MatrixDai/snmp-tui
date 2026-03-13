@@ -135,6 +135,20 @@ fn load_mibs(config: &config::AppConfig) -> mib_parser::OidTree {
         }
     }
 
+    // Load MIBs from standard system directories (Linux)
+    let system_mib_dirs = ["/usr/share/snmp/mibs", "/usr/local/share/snmp/mibs"];
+    for dir in &system_mib_dirs {
+        let dir = PathBuf::from(dir);
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    mib_paths.push(path);
+                }
+            }
+        }
+    }
+
     // Load MIBs from config directories
     for dir in &config.mib_dirs {
         if let Ok(entries) = std::fs::read_dir(dir) {
