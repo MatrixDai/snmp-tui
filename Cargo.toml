@@ -10,3 +10,30 @@ resolver = "2"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+
+[workspace.dependencies]
+# Parser
+pest = "2"
+pest_derive = "2"
+
+# SNMP
+snmp2 = "0.5"
+
+# Async
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+
+# TUI
+ratatui = "0.30"
+crossterm = "0.28"
+
+# CLI & Config
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+# Error handling
+thiserror = "2"
+
+# Workspace crates
+mib-parser = { path = "crates/mib-parser" }
+snmp-client = { path = "crates/snmp-client" }
