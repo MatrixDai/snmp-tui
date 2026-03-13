@@ -356,8 +356,8 @@ impl App {
                 // Still within subtree — continue from last returned OID
                 prev_result.clone()
             } else {
-                // Left the subtree — column exhausted, don't send
-                return;
+                // Left the subtree — loop back to start
+                base_oid
             }
         } else {
             base_oid
@@ -413,6 +413,15 @@ impl App {
                 return;
             }
             _ => {}
+        }
+
+        // For GetNext, suppress results that have left the selected subtree
+        if response.operation == OperationType::GetNext
+            && let SnmpResult::Value(ref resp_oid, _) = response.result
+            && let Some(base_oid) = self.selected_oid()
+            && !resp_oid.components().starts_with(base_oid.components())
+        {
+            return;
         }
 
         self.push_result_entry(&response);
