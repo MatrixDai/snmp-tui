@@ -27,7 +27,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 fn draw_title_bar(frame: &mut Frame, area: Rect, app: &App) {
     let conn_span = match &app.connection {
         ConnectionState::Disconnected => {
-            Span::styled("[No device]", Style::default().fg(Color::DarkGray))
+            Span::styled("[No device]", Style::default().fg(Color::Gray))
         }
         ConnectionState::Connecting => {
             Span::styled("[Connecting...]", Style::default().fg(Color::Yellow))
@@ -80,7 +80,7 @@ fn panel_border_style(focused: FocusedPanel, panel: FocusedPanel) -> Style {
     if focused == panel {
         Style::default().fg(Color::Cyan)
     } else {
-        Style::default().fg(Color::Gray)
+        Style::default().fg(Color::LightBlue)
     }
 }
 
@@ -149,7 +149,7 @@ fn draw_tree_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     if lines.is_empty() {
         lines.push(Line::from(Span::styled(
             "No MIBs loaded",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::Gray),
         )));
     }
 
@@ -199,7 +199,7 @@ fn build_detail_lines(app: &App) -> Vec<Line<'static>> {
         None => {
             return vec![Line::from(Span::styled(
                 "Select a node in the MIB tree",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(Color::Gray),
             ))];
         }
     };
@@ -219,7 +219,7 @@ fn build_detail_lines(app: &App) -> Vec<Line<'static>> {
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
     let value_style = Style::default().fg(Color::White);
-    let dim_style = Style::default().fg(Color::DarkGray);
+    let dim_style = Style::default().fg(Color::Gray);
 
     let mut lines = vec![
         Line::from(vec![
@@ -338,7 +338,7 @@ fn draw_results_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.results_state.entries.is_empty() {
         let placeholder = Line::from(Span::styled(
             "SNMP query results will appear here.",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::Gray),
         ));
         frame.render_widget(Paragraph::new(vec![placeholder]), inner);
         return;
@@ -379,7 +379,7 @@ fn build_results_lines(app: &App) -> Vec<Line<'static>> {
     let oid_style = Style::default().fg(Color::Cyan);
     let value_style = Style::default().fg(Color::White);
     let error_style = Style::default().fg(Color::Red);
-    let dim_style = Style::default().fg(Color::DarkGray);
+    let dim_style = Style::default().fg(Color::Gray);
 
     let mut lines = Vec::new();
 
