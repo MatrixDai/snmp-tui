@@ -330,6 +330,71 @@ impl App {
         }
     }
 
+    /// Smart GET: appends .0 for scalars, uses GETNEXT for table columns.
+    fn send_smart_get(&mut self) {
+        if self.inflight_op.is_some() {
+            return;
+        }
+        if !matches!(self.connection, ConnectionState::Connected { .. }) {
+            return;
+        }
+        let node_idx = match self.tree_state.selected_node() {
+            Some(idx) => idx,
+            None => return,
+        };
+        let oid = match self.oid_tree.resolve_oid(node_idx) {
+            Some(oid) => oid,
+            None => return,
+        };
+
+        // Check if this node is a table column (parent has INDEX clause)
+        let is_table_column = self.is_table_column(node_idx);
+
+        let request = if is_table_column {
+            // Table column: use GETNEXT to get the first instance
+            SnmpRequest::GetNext(oid)
+        } else {
+            // Scalar: append .0 for instance OID
+            let mut components = oid.components().to_vec();
+            components.push(0);
+            SnmpRequest::Get(mib_parser::Oid::new(components))
+        };
+
+        let op = match &request {
+            SnmpRequest::Get(_) => OperationType::Get,
+            SnmpRequest::GetNext(_) => OperationType::GetNext,
+            _ => return,
+        };
+
+        if let Some(ref worker) = self.worker
+            && worker.try_send(request).is_ok()
+        {
+            self.inflight_op = Some(op);
+        }
+    }
+
+    /// Check if a node is a table column (its parent or grandparent has an INDEX clause).
+    fn is_table_column(&self, node_idx: mib_parser::NodeIndex) -> bool {
+        // Walk up the tree looking for a node with index_clause (table row entry)
+        let mut current = node_idx;
+        for _ in 0..3 {
+            if let Some(node) = self.oid_tree.get(current) {
+                if let Some(ref mib) = node.mib_object
+                    && mib.index_clause.is_some()
+                {
+                    return true;
+                }
+                match node.parent {
+                    Some(parent) => current = parent,
+                    None => break,
+                }
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
     /// Get the OID of the currently selected tree node.
     fn selected_oid(&self) -> Option<mib_parser::Oid> {
         let node_idx = self.tree_state.selected_node()?;
@@ -595,7 +660,7 @@ impl App {
                 self.results_state.jump_bottom();
             }
             Message::SnmpGet => {
-                self.send_snmp_request(SnmpRequest::Get);
+                self.send_smart_get();
             }
             Message::SnmpGetNext => {
                 self.send_snmp_request(SnmpRequest::GetNext);
