@@ -42,11 +42,7 @@ fn load_mibs_tolerant(paths: &[PathBuf]) -> (Vec<RawParsedModule>, Vec<String>) 
         match parse_mib_raw(&source) {
             Ok(modules) => all_modules.extend(modules),
             Err(e) => {
-                warnings.push(format!(
-                    "Skipping {} (parse error): {}",
-                    path.display(),
-                    e
-                ));
+                warnings.push(format!("Skipping {} (parse error): {}", path.display(), e));
             }
         }
     }
