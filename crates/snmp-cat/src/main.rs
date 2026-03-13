@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod event;
+mod tree_state;
 mod ui;
 
 use std::io;
@@ -66,9 +67,9 @@ fn run(
     let mut app = App::new(oid_tree);
 
     while app.running {
-        terminal.draw(|frame| ui::draw(frame, &app))?;
+        terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
-        if let Some(msg) = event::poll_event(Duration::from_millis(250)) {
+        if let Some(msg) = event::poll_event(Duration::from_millis(250), &app) {
             app.update(msg);
         }
     }
