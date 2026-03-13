@@ -85,13 +85,13 @@ Ordered task breakdown for building snmp-cat. Each milestone groups related task
 
 > Depends on: Milestone 5 (tree selection drives detail)
 
-- [ ] **6.1** Detail panel: render MIB object metadata for selected tree node — Name, OID (dotted numeric), Module, Syntax, Access (MAX-ACCESS), Status, Description
-- [ ] **6.2** Detail panel: for table/sequence objects, additionally show INDEX clause and column list
-- [ ] **6.3** Detail panel: scrollable description text (`j`/`k` when detail panel is focused)
-- [ ] **6.4** Results panel: define `ResultEntry` struct (operation type, oid, target device, value/error, timestamp)
-- [ ] **6.5** Results panel: render scrollable log widget — newest entries at bottom
-- [ ] **6.6** Results panel: format entries per operation type (GET single value, WALK multiple values, SET confirmation/error)
-- [ ] **6.7** Results panel: auto-scroll on new entries; manual scroll override when user scrolls up; `G` to jump to latest
+- [x] **6.1** Detail panel: render MIB object metadata for selected tree node — Name, OID (dotted numeric), Module, Syntax, Access (MAX-ACCESS), Status, Description
+- [x] **6.2** Detail panel: for table/sequence objects, additionally show INDEX clause and column list
+- [x] **6.3** Detail panel: scrollable description text (`j`/`k` when detail panel is focused)
+- [x] **6.4** Results panel: define `ResultEntry` struct (operation type, oid, target device, value/error, timestamp)
+- [x] **6.5** Results panel: render scrollable log widget — newest entries at bottom
+- [x] **6.6** Results panel: format entries per operation type (GET single value, WALK multiple values, SET confirmation/error)
+- [x] **6.7** Results panel: auto-scroll on new entries; manual scroll override when user scrolls up; `G` to jump to latest
 
 ---
 

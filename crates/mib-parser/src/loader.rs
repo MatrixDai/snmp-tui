@@ -3,7 +3,9 @@ use std::path::PathBuf;
 
 use crate::error::ParseError;
 use crate::oid::Oid;
-use crate::parser::{OidComponent, RawParsedModule, parse_mib_raw, resolve_oid_components};
+use crate::parser::{
+    OidComponent, RawParsedModule, parse_mib_raw, resolve_oid_components, well_known_oids,
+};
 use crate::tree::OidTree;
 
 /// Load MIB files from the given paths and return a unified OID tree.
@@ -126,27 +128,4 @@ fn resolve_all_module_oids(modules: &[RawParsedModule]) -> HashMap<String, Oid> 
     }
 
     resolved
-}
-
-/// Well-known root OIDs for bootstrapping resolution.
-fn well_known_oids() -> HashMap<String, Vec<u32>> {
-    let mut m = HashMap::new();
-    m.insert("iso".to_string(), vec![1]);
-    m.insert("org".to_string(), vec![1, 3]);
-    m.insert("dod".to_string(), vec![1, 3, 6]);
-    m.insert("internet".to_string(), vec![1, 3, 6, 1]);
-    m.insert("directory".to_string(), vec![1, 3, 6, 1, 1]);
-    m.insert("mgmt".to_string(), vec![1, 3, 6, 1, 2]);
-    m.insert("mib-2".to_string(), vec![1, 3, 6, 1, 2, 1]);
-    m.insert("transmission".to_string(), vec![1, 3, 6, 1, 2, 1, 10]);
-    m.insert("experimental".to_string(), vec![1, 3, 6, 1, 3]);
-    m.insert("private".to_string(), vec![1, 3, 6, 1, 4]);
-    m.insert("enterprises".to_string(), vec![1, 3, 6, 1, 4, 1]);
-    m.insert("security".to_string(), vec![1, 3, 6, 1, 5]);
-    m.insert("snmpV2".to_string(), vec![1, 3, 6, 1, 6]);
-    m.insert("snmpDomains".to_string(), vec![1, 3, 6, 1, 6, 1]);
-    m.insert("snmpProxys".to_string(), vec![1, 3, 6, 1, 6, 2]);
-    m.insert("snmpModules".to_string(), vec![1, 3, 6, 1, 6, 3]);
-    m.insert("zeroDotZero".to_string(), vec![0, 0]);
-    m
 }
