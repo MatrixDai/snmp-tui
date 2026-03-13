@@ -40,7 +40,8 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
     // Global keys (always active)
     match key.code {
         KeyCode::Char('q') => return Some(Message::Quit),
-        KeyCode::Char('c') => return Some(Message::OpenConnectModal),
+        KeyCode::Char('o') => return Some(Message::OpenConnectModal),
+        KeyCode::Char('c') => return Some(Message::ClearResults),
         KeyCode::Char('/') => return Some(Message::OpenSearchModal),
         KeyCode::Tab => {
             return if key.modifiers.contains(KeyModifiers::SHIFT) {

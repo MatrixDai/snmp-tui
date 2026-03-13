@@ -66,6 +66,7 @@ pub enum Message {
     OpenConnectModal,
     OpenSetModal,
     OpenSearchModal,
+    ClearResults,
     ModalClose,
     ModalConfirm,
     ModalTabNext,
@@ -681,6 +682,12 @@ impl App {
             }
             Message::OpenSearchModal => {
                 self.modal = Some(Modal::Search(SearchModal::new()));
+            }
+            Message::ClearResults => {
+                self.results_state.entries.clear();
+                self.results_state.scroll_offset = 0;
+                self.results_state.total_lines = 0;
+                self.results_state.auto_scroll = true;
             }
             Message::PrefixG => {
                 self.tree_state.pending_g = true;

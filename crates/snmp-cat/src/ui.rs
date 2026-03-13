@@ -473,11 +473,13 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         match app.focused {
             FocusedPanel::Tree => {
-                "[Tab] Switch  [j/k] Navigate  [Enter] Expand  [Space] GET  [n] GETNEXT  [w] WALK  [s] SET  [c] Connect  [/] Search  [q] Quit"
+                "[Tab] Switch  [j/k] Navigate  [Enter] Expand  [Space] GET  [n] GETNEXT  [w] WALK  [s] SET  [o] Connect  [c] Clear  [/] Search  [q] Quit"
             }
-            FocusedPanel::Detail => "[Tab] Switch  [j/k] Scroll  [c] Connect  [/] Search  [q] Quit",
+            FocusedPanel::Detail => {
+                "[Tab] Switch  [j/k] Scroll  [o] Connect  [c] Clear  [/] Search  [q] Quit"
+            }
             FocusedPanel::Results => {
-                "[Tab] Switch  [j/k] Scroll  [G] Latest  [c] Connect  [/] Search  [q] Quit"
+                "[Tab] Switch  [j/k] Scroll  [G] Latest  [o] Connect  [c] Clear  [/] Search  [q] Quit"
             }
         }
     };
