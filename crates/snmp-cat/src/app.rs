@@ -243,6 +243,11 @@ pub struct App {
     pub response_rx: Option<mpsc::Receiver<SnmpResponse>>,
     /// Pending connect info (host, version) for when connection response arrives.
     pending_connect_info: Option<(String, String)>,
+    /// Current connection config values (for pre-filling the connect modal).
+    pub connect_host: String,
+    pub connect_port: u16,
+    pub connect_version: String,
+    pub connect_community: String,
 }
 
 impl App {
@@ -262,6 +267,10 @@ impl App {
             worker: None,
             response_rx: None,
             pending_connect_info: None,
+            connect_host: String::new(),
+            connect_port: 161,
+            connect_version: "v2c".to_string(),
+            connect_community: "public".to_string(),
         }
     }
 
@@ -281,6 +290,11 @@ impl App {
     pub fn connect(&mut self, config: snmp_client::SnmpConfig) {
         let host = config.destination();
         let version = config.version.to_string();
+        // Save config values for future modal pre-fill
+        self.connect_host = config.host.clone();
+        self.connect_port = config.port;
+        self.connect_version = config.version.to_string();
+        self.connect_community = config.community.clone();
         self.connection = ConnectionState::Connecting;
         self.inflight_op = Some(OperationType::Connect);
         if let Some(ref worker) = self.worker {
@@ -590,7 +604,12 @@ impl App {
                 self.send_snmp_request(SnmpRequest::Walk);
             }
             Message::OpenConnectModal => {
-                self.modal = Some(Modal::Connect(ConnectModal::new()));
+                self.modal = Some(Modal::Connect(ConnectModal::new(
+                    &self.connect_host,
+                    self.connect_port,
+                    &self.connect_version,
+                    &self.connect_community,
+                )));
             }
             Message::OpenSetModal => {
                 self.open_set_modal();

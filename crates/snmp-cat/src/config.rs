@@ -15,27 +15,27 @@ pub struct CliArgs {
     #[arg(long = "mib-file")]
     pub mib_file: Option<PathBuf>,
 
-    /// SNMP target host
+    /// SNMP target host [default: localhost]
     #[arg(long)]
     pub host: Option<String>,
 
-    /// SNMP target port
+    /// SNMP target port [default: 161]
     #[arg(long)]
     pub port: Option<u16>,
 
-    /// SNMP community string
+    /// SNMP community string [default: public]
     #[arg(long)]
     pub community: Option<String>,
 
-    /// SNMP version (1, 2c, 3)
+    /// SNMP version (1, 2c, 3) [default: v2c]
     #[arg(long = "snmp-version")]
     pub snmp_version: Option<String>,
 
-    /// SNMP timeout in milliseconds
+    /// SNMP timeout in milliseconds [default: 5000]
     #[arg(long)]
     pub timeout: Option<u64>,
 
-    /// SNMP retries
+    /// SNMP retries [default: 1]
     #[arg(long)]
     pub retries: Option<u32>,
 

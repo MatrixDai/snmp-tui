@@ -31,24 +31,24 @@ pub enum FieldKind {
 }
 
 impl ConnectModal {
-    pub fn new() -> Self {
+    pub fn new(host: &str, port: u16, version: &str, community: &str) -> Self {
         Self {
             fields: vec![
                 FormField {
                     label: "Host",
-                    value: String::new(),
+                    value: host.to_string(),
                     kind: FieldKind::Text,
                     editable: true,
                 },
                 FormField {
                     label: "Port",
-                    value: "161".to_string(),
+                    value: port.to_string(),
                     kind: FieldKind::Text,
                     editable: true,
                 },
                 FormField {
                     label: "Version",
-                    value: "v2c".to_string(),
+                    value: version.to_string(),
                     kind: FieldKind::Cycle(vec![
                         "v1".to_string(),
                         "v2c".to_string(),
@@ -58,7 +58,7 @@ impl ConnectModal {
                 },
                 FormField {
                     label: "Community",
-                    value: "public".to_string(),
+                    value: community.to_string(),
                     kind: FieldKind::Text,
                     editable: true,
                 },
@@ -416,7 +416,7 @@ impl SearchModal {
             query: String::new(),
             results: Vec::new(),
             selected: 0,
-            max_results: 20,
+            max_results: 100,
         }
     }
 
