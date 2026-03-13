@@ -728,7 +728,7 @@ fn parse_generic_def_with_oid(
 // ============================================================
 
 /// Well-known root OIDs for bootstrapping resolution.
-fn well_known_oids() -> HashMap<String, Vec<u32>> {
+pub fn well_known_oids() -> HashMap<String, Vec<u32>> {
     let mut m = HashMap::new();
     m.insert("iso".to_string(), vec![1]);
     m.insert("org".to_string(), vec![1, 3]);

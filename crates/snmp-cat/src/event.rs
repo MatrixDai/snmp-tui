@@ -48,7 +48,8 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
     // Panel-specific keys
     match app.focused {
         FocusedPanel::Tree => handle_tree_key(key),
-        FocusedPanel::Detail | FocusedPanel::Results => None,
+        FocusedPanel::Detail => handle_detail_key(key),
+        FocusedPanel::Results => handle_results_key(key),
     }
 }
 
@@ -60,6 +61,23 @@ fn handle_tree_key(key: KeyEvent) -> Option<Message> {
         KeyCode::Char('h') | KeyCode::Left => Some(Message::TreeCollapse),
         KeyCode::Char('G') => Some(Message::TreeJumpBottom),
         KeyCode::Char('g') => Some(Message::PrefixG),
+        _ => None,
+    }
+}
+
+fn handle_detail_key(key: KeyEvent) -> Option<Message> {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => Some(Message::DetailScrollDown),
+        KeyCode::Char('k') | KeyCode::Up => Some(Message::DetailScrollUp),
+        _ => None,
+    }
+}
+
+fn handle_results_key(key: KeyEvent) -> Option<Message> {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => Some(Message::ResultsScrollDown),
+        KeyCode::Char('k') | KeyCode::Up => Some(Message::ResultsScrollUp),
+        KeyCode::Char('G') => Some(Message::ResultsJumpBottom),
         _ => None,
     }
 }

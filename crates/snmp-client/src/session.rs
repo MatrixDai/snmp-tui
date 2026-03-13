@@ -277,7 +277,6 @@ impl SnmpSession {
     /// Perform a SET operation.
     pub fn set(&mut self, oid: &Oid, value: &SnmpValue) -> Result<(), SnmpError> {
         let snmp_oid = to_snmp2_oid(oid)?;
-        let snmp_value = to_snmp2_value(value);
 
         let mut last_err = None;
         for _ in 0..=self.config.retries {
@@ -289,7 +288,6 @@ impl SnmpSession {
                 Err(e) => last_err = Some(e),
             }
         }
-        drop(snmp_value);
         Err(last_err
             .map(SnmpError::from)
             .unwrap_or_else(|| SnmpError::Protocol("no response received".to_string())))
@@ -324,10 +322,13 @@ fn to_snmp2_value<'a>(value: &'a SnmpValue) -> snmp2::Value<'a> {
     match value {
         SnmpValue::Integer(v) => snmp2::Value::Integer(*v),
         SnmpValue::OctetString(bytes) => snmp2::Value::OctetString(bytes),
-        SnmpValue::ObjectIdentifier(_) => {
-            // OID values require owned conversion; use Null as fallback
-            // for SET operations on OID types (rare)
-            snmp2::Value::Null
+        SnmpValue::ObjectIdentifier(oid) => {
+            // Convert our OID to snmp2's OID for SET operations.
+            // If conversion fails (shouldn't for valid OIDs), fall back to Null.
+            match to_snmp2_oid(oid) {
+                Ok(snmp_oid) => snmp2::Value::ObjectIdentifier(snmp_oid),
+                Err(_) => snmp2::Value::Null,
+            }
         }
         SnmpValue::IpAddress(addr) => snmp2::Value::IpAddress(*addr),
         SnmpValue::Counter32(v) => snmp2::Value::Counter32(*v),

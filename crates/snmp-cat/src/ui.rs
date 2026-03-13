@@ -1,10 +1,12 @@
+use std::time::SystemTime;
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::app::{App, FocusedPanel};
+use crate::app::{App, FocusedPanel, ResultValue};
 
 /// Render the entire application UI.
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -141,7 +143,7 @@ fn draw_tree_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-fn draw_detail_panel(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_detail_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     let style = panel_border_style(app.focused, FocusedPanel::Detail);
     let block = Block::default()
         .title(" Object Detail ")
@@ -152,7 +154,28 @@ fn draw_detail_panel(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(block, area);
 
     let lines = build_detail_lines(app);
-    frame.render_widget(Paragraph::new(lines), inner);
+    let total_lines = lines.len();
+    let viewport_height = inner.height as usize;
+
+    // Update detail state with actual total lines for proper scroll bounds
+    app.detail_state.total_lines = total_lines;
+    // Clamp scroll offset
+    if total_lines > viewport_height {
+        if app.detail_state.scroll_offset > total_lines - viewport_height {
+            app.detail_state.scroll_offset = total_lines - viewport_height;
+        }
+    } else {
+        app.detail_state.scroll_offset = 0;
+    }
+
+    let scroll = app.detail_state.scroll_offset;
+    let visible_lines: Vec<Line> = lines
+        .into_iter()
+        .skip(scroll)
+        .take(viewport_height)
+        .collect();
+
+    frame.render_widget(Paragraph::new(visible_lines), inner);
 }
 
 fn build_detail_lines(app: &App) -> Vec<Line<'static>> {
@@ -235,6 +258,34 @@ fn build_detail_lines(app: &App) -> Vec<Line<'static>> {
             ]));
         }
 
+        // For table/row objects with children, show column list
+        if !node.children.is_empty() {
+            let child_names: Vec<String> = node
+                .children
+                .iter()
+                .filter_map(|&child_idx| {
+                    app.oid_tree.get(child_idx).map(|child| {
+                        if child.name.is_empty() {
+                            format!("{}", child.subid)
+                        } else {
+                            child.name.clone()
+                        }
+                    })
+                })
+                .collect();
+
+            if !child_names.is_empty() {
+                lines.push(Line::from(Span::raw("")));
+                lines.push(Line::from(Span::styled("  Children:", label_style)));
+                for name in &child_names {
+                    lines.push(Line::from(Span::styled(
+                        format!("    {}", name),
+                        value_style,
+                    )));
+                }
+            }
+        }
+
         if let Some(ref desc) = mib_obj.description {
             lines.push(Line::from(Span::raw("")));
             // Strip quotes from description if present
@@ -257,19 +308,122 @@ fn build_detail_lines(app: &App) -> Vec<Line<'static>> {
     lines
 }
 
-fn draw_results_panel(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_results_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     let style = panel_border_style(app.focused, FocusedPanel::Results);
     let block = Block::default()
         .title(" Query Results ")
         .borders(Borders::ALL)
         .border_style(style);
 
-    let content = "SNMP query results will\nappear here.";
-    let paragraph = Paragraph::new(content)
-        .block(block)
-        .style(Style::default().fg(Color::DarkGray));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    frame.render_widget(paragraph, area);
+    let viewport_height = inner.height as usize;
+
+    if app.results_state.entries.is_empty() {
+        let placeholder = Line::from(Span::styled(
+            "SNMP query results will appear here.",
+            Style::default().fg(Color::DarkGray),
+        ));
+        frame.render_widget(Paragraph::new(vec![placeholder]), inner);
+        return;
+    }
+
+    let lines = build_results_lines(app);
+    let total_lines = lines.len();
+    app.results_state.total_lines = total_lines;
+
+    // Auto-scroll to bottom on new entries
+    if app.results_state.auto_scroll && total_lines > viewport_height {
+        app.results_state.scroll_offset = total_lines - viewport_height;
+    }
+
+    // Clamp scroll offset
+    if total_lines > viewport_height {
+        if app.results_state.scroll_offset > total_lines - viewport_height {
+            app.results_state.scroll_offset = total_lines - viewport_height;
+        }
+    } else {
+        app.results_state.scroll_offset = 0;
+    }
+
+    let scroll = app.results_state.scroll_offset;
+    let visible_lines: Vec<Line> = lines
+        .into_iter()
+        .skip(scroll)
+        .take(viewport_height)
+        .collect();
+
+    frame.render_widget(Paragraph::new(visible_lines), inner);
+}
+
+fn build_results_lines(app: &App) -> Vec<Line<'static>> {
+    let header_style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+    let oid_style = Style::default().fg(Color::Cyan);
+    let value_style = Style::default().fg(Color::White);
+    let error_style = Style::default().fg(Color::Red);
+    let dim_style = Style::default().fg(Color::DarkGray);
+
+    let mut lines = Vec::new();
+
+    for (i, entry) in app.results_state.entries.iter().enumerate() {
+        if i > 0 {
+            lines.push(Line::from(Span::styled("─".repeat(40), dim_style)));
+        }
+
+        let time_str = format_timestamp(entry.timestamp);
+        lines.push(Line::from(vec![
+            Span::styled(format!("[{}] ", time_str), dim_style),
+            Span::styled(format!("{}", entry.operation), header_style),
+            Span::styled(format!("  {}", entry.target), dim_style),
+        ]));
+
+        match &entry.result {
+            ResultValue::Single(val) => {
+                lines.push(Line::from(vec![
+                    Span::styled("  ", value_style),
+                    Span::styled(entry.oid.clone(), oid_style),
+                    Span::styled(" = ", dim_style),
+                    Span::styled(val.clone(), value_style),
+                ]));
+            }
+            ResultValue::Multiple(pairs) => {
+                for (oid, val) in pairs {
+                    lines.push(Line::from(vec![
+                        Span::styled("  ", value_style),
+                        Span::styled(oid.clone(), oid_style),
+                        Span::styled(" = ", dim_style),
+                        Span::styled(val.clone(), value_style),
+                    ]));
+                }
+            }
+            ResultValue::Error(err) => {
+                lines.push(Line::from(vec![
+                    Span::styled("  ", error_style),
+                    Span::styled(entry.oid.clone(), oid_style),
+                    Span::styled(" → ", dim_style),
+                    Span::styled(err.clone(), error_style),
+                ]));
+            }
+        }
+    }
+
+    lines
+}
+
+fn format_timestamp(ts: SystemTime) -> String {
+    match ts.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(dur) => {
+            let secs = dur.as_secs();
+            let hours = (secs / 3600) % 24;
+            let minutes = (secs / 60) % 60;
+            let seconds = secs % 60;
+            format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+        }
+        Err(_) => "??:??:??".to_string(),
+    }
 }
 
 fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
