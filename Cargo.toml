@@ -34,6 +34,9 @@ toml = "0.8"
 # Error handling
 thiserror = "2"
 
+# Clipboard
+arboard = "3"
+
 # Workspace crates
 mib-parser = { path = "crates/mib-parser" }
 snmp-client = { path = "crates/snmp-client" }

@@ -28,6 +28,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.modal.is_some() {
         draw_modal(frame, app);
     }
+
+    // Render help overlay if active
+    if app.show_help {
+        draw_help_overlay(frame);
+    }
+
+    // Clear expired status messages (after 2 seconds)
+    if let Some((_, instant)) = &app.status_message
+        && instant.elapsed() > std::time::Duration::from_secs(2)
+    {
+        app.status_message = None;
+    }
 }
 
 fn draw_title_bar(frame: &mut Frame, area: Rect, app: &App) {
@@ -86,7 +98,7 @@ fn panel_border_style(focused: FocusedPanel, panel: FocusedPanel) -> Style {
     if focused == panel {
         Style::default().fg(Color::Cyan)
     } else {
-        Style::default().fg(Color::LightBlue)
+        Style::default().fg(Color::DarkGray)
     }
 }
 
@@ -154,7 +166,16 @@ fn draw_tree_panel(frame: &mut Frame, area: Rect, app: &mut App) {
 
     if lines.is_empty() {
         lines.push(Line::from(Span::styled(
-            "No MIBs loaded",
+            "No MIBs loaded.",
+            Style::default().fg(Color::Yellow),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Add MIB files via --mib-dir or --mib-file,",
+            Style::default().fg(Color::Gray),
+        )));
+        lines.push(Line::from(Span::styled(
+            "or configure mib_dirs in config.toml.",
             Style::default().fg(Color::Gray),
         )));
     }
@@ -342,10 +363,12 @@ fn draw_results_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     app.results_state.viewport_height = viewport_height;
 
     if app.results_state.entries.is_empty() {
-        let placeholder = Line::from(Span::styled(
-            "SNMP query results will appear here.",
-            Style::default().fg(Color::Gray),
-        ));
+        let msg = if matches!(app.connection, ConnectionState::Connected { .. }) {
+            "Select an OID and press [Space] to GET, [n] GETNEXT, or [w] WALK."
+        } else {
+            "Press [o] to connect to an SNMP device."
+        };
+        let placeholder = Line::from(Span::styled(msg, Style::default().fg(Color::Gray)));
         frame.render_widget(Paragraph::new(vec![placeholder]), inner);
         return;
     }
@@ -456,6 +479,18 @@ fn format_timestamp(ts: SystemTime) -> String {
 }
 
 fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
+    // Show transient status message (e.g., "Copied to clipboard")
+    if let Some((ref msg, _)) = app.status_message {
+        let status = Line::from(Span::styled(
+            format!(" {} ", msg),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ));
+        frame.render_widget(Paragraph::new(status), area);
+        return;
+    }
+
     // Show loading indicator if an operation is in-flight
     if let Some(ref op) = app.inflight_op {
         let loading = Line::from(Span::styled(
@@ -468,18 +503,24 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    let is_connected = matches!(app.connection, ConnectionState::Connected { .. });
+
     let hints = if app.modal.is_some() {
-        "[Esc] Cancel  [Tab] Next field  [Enter] Confirm/Cycle"
+        "[Esc] Cancel  [Tab] Next field  [Enter] Confirm/Cycle".to_string()
     } else {
         match app.focused {
             FocusedPanel::Tree => {
-                "[Tab] Switch  [j/k] Navigate  [Enter] Expand  [Space] GET  [n] GETNEXT  [w] WALK  [s] SET  [o] Connect  [c] Clear  [/] Search  [q] Quit"
+                if is_connected {
+                    "[Tab] Switch  [j/k] Navigate  [Enter] Expand  [Space] GET  [n] GETNEXT  [w] WALK  [s] SET  [o] Connect  [/] Search  [?] Help  [q] Quit".to_string()
+                } else {
+                    "[Tab] Switch  [j/k] Navigate  [Enter] Expand  [o] Connect first to query  [/] Search  [?] Help  [q] Quit".to_string()
+                }
             }
             FocusedPanel::Detail => {
-                "[Tab] Switch  [j/k] Scroll  [o] Connect  [c] Clear  [/] Search  [q] Quit"
+                "[Tab] Switch  [j/k] Scroll  [o] Connect  [/] Search  [?] Help  [q] Quit".to_string()
             }
             FocusedPanel::Results => {
-                "[Tab] Switch  [j/k] Scroll  [G] Latest  [o] Connect  [c] Clear  [/] Search  [q] Quit"
+                "[Tab] Switch  [j/k] Scroll  [G] Latest  [y] Copy  [o] Connect  [/] Search  [?] Help  [q] Quit".to_string()
             }
         }
     };
@@ -711,4 +752,95 @@ fn draw_search_modal(frame: &mut Frame, modal: &crate::modal::SearchModal) {
     lines.truncate(viewport_height);
 
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn draw_help_overlay(frame: &mut Frame) {
+    let area = centered_rect(60, 80, frame.area());
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(" Key Bindings ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let heading_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let key_style = Style::default().fg(Color::Yellow);
+    let desc_style = Style::default().fg(Color::White);
+    let dim_style = Style::default().fg(Color::Gray);
+
+    let lines = vec![
+        Line::from(Span::styled("  Global", heading_style)),
+        help_line(
+            "    Tab / Shift+Tab",
+            "Switch panel focus",
+            key_style,
+            desc_style,
+        ),
+        help_line("    o", "Open connect dialog", key_style, desc_style),
+        help_line("    c", "Clear results", key_style, desc_style),
+        help_line("    /", "Search MIB objects", key_style, desc_style),
+        help_line("    ?", "Toggle this help", key_style, desc_style),
+        help_line("    q", "Quit", key_style, desc_style),
+        Line::from(""),
+        Line::from(Span::styled("  MIB Tree Panel", heading_style)),
+        help_line("    j/k or Up/Down", "Navigate tree", key_style, desc_style),
+        help_line(
+            "    Enter / l / Right",
+            "Expand node",
+            key_style,
+            desc_style,
+        ),
+        help_line(
+            "    h / Left",
+            "Collapse / go to parent",
+            key_style,
+            desc_style,
+        ),
+        help_line("    gg", "Jump to top", key_style, desc_style),
+        help_line("    G", "Jump to bottom", key_style, desc_style),
+        help_line("    Space", "GET selected OID", key_style, desc_style),
+        help_line("    n", "GETNEXT (advancing)", key_style, desc_style),
+        help_line("    w", "WALK subtree", key_style, desc_style),
+        help_line("    s", "SET value dialog", key_style, desc_style),
+        Line::from(""),
+        Line::from(Span::styled("  Detail Panel", heading_style)),
+        help_line(
+            "    j/k or Up/Down",
+            "Scroll description",
+            key_style,
+            desc_style,
+        ),
+        Line::from(""),
+        Line::from(Span::styled("  Results Panel", heading_style)),
+        help_line(
+            "    j/k or Up/Down",
+            "Scroll results",
+            key_style,
+            desc_style,
+        ),
+        help_line("    G", "Jump to latest", key_style, desc_style),
+        help_line(
+            "    y",
+            "Copy last result to clipboard",
+            key_style,
+            desc_style,
+        ),
+        Line::from(""),
+        Line::from(Span::styled("  Press any key to close", dim_style)),
+    ];
+
+    let viewport_height = inner.height as usize;
+    let visible: Vec<Line> = lines.into_iter().take(viewport_height).collect();
+    frame.render_widget(Paragraph::new(visible), inner);
+}
+
+fn help_line<'a>(key: &'a str, desc: &'a str, key_style: Style, desc_style: Style) -> Line<'a> {
+    Line::from(vec![
+        Span::styled(format!("{:24}", key), key_style),
+        Span::styled(desc, desc_style),
+    ])
 }

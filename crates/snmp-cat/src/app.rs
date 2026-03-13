@@ -4,6 +4,7 @@ use mib_parser::OidTree;
 use snmp_client::{OperationType, SnmpRequest, SnmpResponse, SnmpResult, SnmpWorker};
 use tokio::sync::mpsc;
 
+use crate::config;
 use crate::modal::{ConnectModal, Modal, SearchModal, SetModal};
 use crate::tree_state::TreeState;
 
@@ -62,10 +63,14 @@ pub enum Message {
     SnmpGetNext,
     SnmpWalk,
 
+    // Clipboard
+    CopyResult,
+
     // Modal dialogs
     OpenConnectModal,
     OpenSetModal,
     OpenSearchModal,
+    ToggleHelp,
     ClearResults,
     ModalClose,
     ModalConfirm,
@@ -252,6 +257,12 @@ pub struct App {
     /// Last OID returned by GETNEXT, keyed by the base (tree node) OID.
     /// Used to advance through table rows on repeated GETNEXT presses.
     last_getnext_oid: Option<(mib_parser::Oid, mib_parser::Oid)>,
+    /// Show help overlay.
+    pub show_help: bool,
+    /// Transient status message (e.g., "Copied to clipboard").
+    pub status_message: Option<(String, std::time::Instant)>,
+    /// Maximum number of WALK result entries before truncation (9.5).
+    pub max_walk_entries: usize,
 }
 
 impl App {
@@ -276,6 +287,9 @@ impl App {
             connect_version: "v2c".to_string(),
             connect_community: "public".to_string(),
             last_getnext_oid: None,
+            show_help: false,
+            status_message: None,
+            max_walk_entries: 500,
         }
     }
 
@@ -396,6 +410,13 @@ impl App {
                     SnmpResult::Ok(_) => {
                         if let Some((host, version)) = self.pending_connect_info.take() {
                             self.connection = ConnectionState::Connected { host, version };
+                            // 9.1: Persist connection settings to config file
+                            config::save_connection_settings(
+                                &self.connect_host,
+                                self.connect_port,
+                                &self.connect_version,
+                                &self.connect_community,
+                            );
                         }
                     }
                     SnmpResult::Error(e) => {
@@ -441,10 +462,19 @@ impl App {
                 (resp_oid.to_string(), ResultValue::Single(value.to_string()))
             }
             SnmpResult::MultiValue(pairs) => {
-                let formatted: Vec<(String, String)> = pairs
+                let total = pairs.len();
+                let limit = self.max_walk_entries;
+                let mut formatted: Vec<(String, String)> = pairs
                     .iter()
+                    .take(limit)
                     .map(|(oid, val)| (oid.to_string(), val.to_string()))
                     .collect();
+                if total > limit {
+                    formatted.push((
+                        String::new(),
+                        format!("... ({} more entries truncated)", total - limit),
+                    ));
+                }
                 (
                     response.request_oid.to_string(),
                     ResultValue::Multiple(formatted),
@@ -470,6 +500,39 @@ impl App {
 
         self.results_state.entries.push(entry);
         // Auto-scroll will be applied in draw
+    }
+
+    /// Copy the most recent result entry's value to system clipboard.
+    fn copy_selected_result(&mut self) {
+        if let Some(entry) = self.results_state.entries.last() {
+            let text = match &entry.result {
+                ResultValue::Single(v) => {
+                    if entry.oid.is_empty() {
+                        v.clone()
+                    } else {
+                        format!("{} = {}", entry.oid, v)
+                    }
+                }
+                ResultValue::Multiple(pairs) => pairs
+                    .iter()
+                    .map(|(oid, val)| format!("{} = {}", oid, val))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                ResultValue::Error(e) => format!("{} -> {}", entry.oid, e),
+            };
+            match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(&text)) {
+                Ok(()) => {
+                    self.status_message =
+                        Some(("Copied to clipboard".to_string(), std::time::Instant::now()));
+                }
+                Err(_) => {
+                    self.status_message = Some((
+                        "Failed to copy to clipboard".to_string(),
+                        std::time::Instant::now(),
+                    ));
+                }
+            }
+        }
     }
 
     /// Open the SET modal for the currently selected OID.
@@ -690,6 +753,12 @@ impl App {
             }
             Message::OpenSearchModal => {
                 self.modal = Some(Modal::Search(SearchModal::new()));
+            }
+            Message::CopyResult => {
+                self.copy_selected_result();
+            }
+            Message::ToggleHelp => {
+                self.show_help = !self.show_help;
             }
             Message::ClearResults => {
                 self.results_state.entries.clear();
