@@ -351,14 +351,13 @@ impl App {
 
         // If we have a previous result whose request was for this base OID
         // (or a sub-OID of it), advance from the last returned OID
-        let request_oid = if let Some((ref prev_base, ref prev_result)) = self.last_getnext_oid {
+        let request_oid = if let Some((_, ref prev_result)) = self.last_getnext_oid {
             if prev_result.components().starts_with(base_oid.components()) {
-                // Continue from last returned OID
-                prev_result.clone()
-            } else if prev_base == &base_oid {
+                // Still within subtree — continue from last returned OID
                 prev_result.clone()
             } else {
-                base_oid
+                // Left the subtree — column exhausted, don't send
+                return;
             }
         } else {
             base_oid
