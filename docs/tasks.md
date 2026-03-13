@@ -113,12 +113,12 @@ Ordered task breakdown for building snmp-cat. Each milestone groups related task
 
 > Depends on: Milestone 7 (SNMP operations wired)
 
-- [ ] **8.1** Modal rendering infrastructure: `Clear` widget + centered `Block::bordered()` overlay; when `app.modal.is_some()`, all input routed to modal handler
-- [ ] **8.2** Device connection modal (`c` key): form fields for Host, Port, Version (cycle v1/v2c/v3), Community; Tab between fields, Enter to connect, Esc to cancel
-- [ ] **8.3** Device connection modal: when v3 selected, show additional fields — Username, Auth Protocol (MD5/SHA), Auth Pass, Privacy Protocol (DES/AES), Privacy Pass
-- [ ] **8.4** On connect: create `SnmpSession` via background task, update `app.connection`, show device info in title bar (e.g., `192.168.1.1 v2c`) or show `[No device]`
-- [ ] **8.5** SNMP SET modal (`s` key, tree focused): pre-fill OID, Name, Type from selected node (read-only); value input field; type-aware input (integer for INTEGER/Counter/Gauge/TimeTicks, text for OCTET STRING/DisplayString, formatted IP for IpAddress); auto-append `.0` for scalar objects
-- [ ] **8.6** Search modal (`/` key): text input with fuzzy match across all MIB object names; live-updating result list as user types; Enter selects and navigates tree to matched node; Esc cancels
+- [x] **8.1** Modal rendering infrastructure: `Clear` widget + centered `Block::bordered()` overlay; when `app.modal.is_some()`, all input routed to modal handler
+- [x] **8.2** Device connection modal (`c` key): form fields for Host, Port, Version (cycle v1/v2c/v3), Community; Tab between fields, Enter to connect, Esc to cancel
+- [x] **8.3** Device connection modal: when v3 selected, show additional fields — Username, Auth Protocol (MD5/SHA), Auth Pass, Privacy Protocol (DES/AES), Privacy Pass
+- [x] **8.4** On connect: create `SnmpSession` via background task, update `app.connection`, show device info in title bar (e.g., `192.168.1.1 v2c`) or show `[No device]`
+- [x] **8.5** SNMP SET modal (`s` key, tree focused): pre-fill OID, Name, Type from selected node (read-only); value input field; type-aware input (integer for INTEGER/Counter/Gauge/TimeTicks, text for OCTET STRING/DisplayString, formatted IP for IpAddress); auto-append `.0` for scalar objects
+- [x] **8.6** Search modal (`/` key): text input with fuzzy match across all MIB object names; live-updating result list as user types; Enter selects and navigates tree to matched node; Esc cancels
 
 ---
 
