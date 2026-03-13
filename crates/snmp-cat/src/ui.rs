@@ -80,7 +80,7 @@ fn panel_border_style(focused: FocusedPanel, panel: FocusedPanel) -> Style {
     if focused == panel {
         Style::default().fg(Color::Cyan)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(Color::Gray)
     }
 }
 
@@ -470,6 +470,6 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
         FocusedPanel::Results => "[Tab] Switch  [j/k] Scroll  [G] Latest  [q] Quit",
     };
 
-    let status = Line::from(Span::styled(hints, Style::default().fg(Color::DarkGray)));
+    let status = Line::from(Span::styled(hints, Style::default().fg(Color::Gray)));
     frame.render_widget(Paragraph::new(status), area);
 }
