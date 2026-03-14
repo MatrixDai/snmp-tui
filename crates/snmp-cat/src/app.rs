@@ -411,6 +411,12 @@ impl App {
             None => return QueryStrategy::Next,
         };
 
+        // Branch nodes (MODULE-IDENTITY, table entries, OID branches) always use GETNEXT/WALK
+        if !node.children.is_empty() {
+            return QueryStrategy::Next;
+        }
+
+        // Leaf nodes: determine strategy from MIB metadata
         if let Some(ref mib_obj) = node.mib_object {
             if mib_obj.access.is_some() {
                 // OBJECT-TYPE: scalar or table column?
@@ -423,10 +429,8 @@ impl App {
                 // OBJECT-IDENTITY or similar: direct GET on exact OID
                 QueryStrategy::Direct
             }
-        } else if node.children.is_empty() {
-            QueryStrategy::Direct // leaf without MIB data
         } else {
-            QueryStrategy::Next // branch node
+            QueryStrategy::Direct // leaf without MIB data
         }
     }
 
