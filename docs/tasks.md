@@ -126,11 +126,11 @@ Ordered task breakdown for building snmp-cat. Each milestone groups related task
 
 > Depends on: all prior milestones
 
-- [ ] **9.1** Config file persistence — save connection settings and MIB directories to `~/.config/snmp-cat/config.toml` on change
-- [ ] **9.2** `y` key (results panel focused) → copy selected result value to system clipboard
-- [ ] **9.3** `?` key → toggle help overlay showing all key bindings
-- [ ] **9.4** Color theme and consistent styling across all panels and modals
-- [ ] **9.5** Edge case handling: no MIBs loaded (show helpful message), no device connected (disable SNMP keys, show hint), large WALK results (limit or paginate)
+- [x] **9.1** Config file persistence — save connection settings and MIB directories to `~/.snmp-cat/config.toml` on change
+- [x] **9.2** `y` key (results panel focused) → copy selected result value to system clipboard
+- [x] **9.3** `?` key → toggle help overlay showing all key bindings
+- [x] **9.4** Color theme and consistent styling across all panels and modals
+- [x] **9.5** Edge case handling: no MIBs loaded (show helpful message), no device connected (disable SNMP keys, show hint), large WALK results (limit or paginate)
 - [ ] **9.6** README screenshot / demo GIF
 - [ ] **9.7** License selection and LICENSE file
 

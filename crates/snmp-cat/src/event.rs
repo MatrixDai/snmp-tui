@@ -37,6 +37,16 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
     // If pending_g but not a second `g`, fall through to normal handling
     // (pending_g will be cleared in update)
 
+    // Help overlay toggle (works everywhere)
+    if key.code == KeyCode::Char('?') {
+        return Some(Message::ToggleHelp);
+    }
+
+    // If help overlay is showing, any other key dismisses it
+    if app.show_help {
+        return Some(Message::ToggleHelp);
+    }
+
     // Global keys (always active)
     match key.code {
         KeyCode::Char('q') => return Some(Message::Quit),
@@ -129,6 +139,7 @@ fn handle_results_key(key: KeyEvent) -> Option<Message> {
         KeyCode::Char('j') | KeyCode::Down => Some(Message::ResultsScrollDown),
         KeyCode::Char('k') | KeyCode::Up => Some(Message::ResultsScrollUp),
         KeyCode::Char('G') => Some(Message::ResultsJumpBottom),
+        KeyCode::Char('y') => Some(Message::CopyResult),
         _ => None,
     }
 }

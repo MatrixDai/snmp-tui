@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Interactive TUI tool for SNMP MIB exploration and device inspection.
 #[derive(Parser, Debug)]
@@ -44,8 +44,8 @@ pub struct CliArgs {
     pub debug: bool,
 }
 
-/// Configuration loaded from `~/.config/snmp-cat/config.toml`.
-#[derive(Debug, Default, Deserialize)]
+/// Configuration loaded from / saved to `~/.snmp-cat/config.toml`.
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct FileConfig {
     pub mib_dirs: Vec<PathBuf>,
@@ -89,7 +89,7 @@ impl Default for AppConfig {
     }
 }
 
-/// Load config file from `~/.config/snmp-cat/config.toml` if it exists.
+/// Load config file from `~/.snmp-cat/config.toml` if it exists.
 pub fn load_config_file() -> FileConfig {
     if let Some(path) = dirs_config_path()
         && path.exists()
@@ -155,20 +155,34 @@ pub fn to_snmp_config(app_config: &AppConfig) -> Option<snmp_client::SnmpConfig>
     })
 }
 
+/// Save connection settings to the config file, merging with existing config.
+pub fn save_connection_settings(host: &str, port: u16, version: &str, community: &str) {
+    let mut config = load_config_file();
+    config.host = Some(host.to_string());
+    config.port = Some(port);
+    config.snmp_version = Some(version.to_string());
+    config.community = Some(community.to_string());
+    save_config_file(&config);
+}
+
+/// Save config to `~/.snmp-cat/config.toml`.
+fn save_config_file(config: &FileConfig) {
+    if let Some(dir) = dirs_path() {
+        if !dir.exists() {
+            let _ = std::fs::create_dir_all(&dir);
+        }
+        if let Some(path) = dirs_config_path()
+            && let Ok(contents) = toml::to_string_pretty(config)
+        {
+            let _ = std::fs::write(path, contents);
+        }
+    }
+}
+
 fn dirs_config_path() -> Option<PathBuf> {
     dirs_path().map(|p| p.join("config.toml"))
 }
 
 fn dirs_path() -> Option<PathBuf> {
-    #[cfg(target_os = "macos")]
-    {
-        std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config").join("snmp-cat"))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-            .map(|p| p.join("snmp-cat"))
-    }
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".snmp-cat"))
 }

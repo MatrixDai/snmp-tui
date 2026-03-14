@@ -4,7 +4,18 @@ use mib_parser::OidTree;
 use snmp_client::{OperationType, SnmpRequest, SnmpResponse, SnmpResult, SnmpWorker};
 use tokio::sync::mpsc;
 
+use crate::config;
 use crate::modal::{ConnectModal, Modal, SearchModal, SetModal};
+
+/// SNMP query strategy determined from MIB object metadata.
+enum QueryStrategy {
+    /// Scalar OBJECT-TYPE: GET with `.0` appended.
+    Scalar,
+    /// Instance OID (OBJECT-IDENTITY or leaf without access): GET on exact OID.
+    Direct,
+    /// Table column or branch: GETNEXT to discover instances.
+    Next,
+}
 use crate::tree_state::TreeState;
 
 /// Which panel currently has focus.
@@ -62,10 +73,14 @@ pub enum Message {
     SnmpGetNext,
     SnmpWalk,
 
+    // Clipboard
+    CopyResult,
+
     // Modal dialogs
     OpenConnectModal,
     OpenSetModal,
     OpenSearchModal,
+    ToggleHelp,
     ClearResults,
     ModalClose,
     ModalConfirm,
@@ -132,7 +147,7 @@ impl DetailState {
 pub struct ResultEntry {
     pub operation: OperationType,
     pub oid: String,
-    pub target: String,
+    pub object_name: String,
     pub result: ResultValue,
     pub timestamp: SystemTime,
 }
@@ -252,6 +267,12 @@ pub struct App {
     /// Last OID returned by GETNEXT, keyed by the base (tree node) OID.
     /// Used to advance through table rows on repeated GETNEXT presses.
     last_getnext_oid: Option<(mib_parser::Oid, mib_parser::Oid)>,
+    /// Show help overlay.
+    pub show_help: bool,
+    /// Transient status message (e.g., "Copied to clipboard").
+    pub status_message: Option<(String, std::time::Instant)>,
+    /// Maximum number of WALK result entries before truncation (9.5).
+    pub max_walk_entries: usize,
 }
 
 impl App {
@@ -276,6 +297,9 @@ impl App {
             connect_version: "v2c".to_string(),
             connect_community: "public".to_string(),
             last_getnext_oid: None,
+            show_help: false,
+            status_message: None,
+            max_walk_entries: 500,
         }
     }
 
@@ -376,6 +400,75 @@ impl App {
         self.oid_tree.resolve_oid(node_idx)
     }
 
+    /// Determine the SNMP query strategy based on MIB object metadata.
+    fn query_strategy(&self) -> QueryStrategy {
+        let node_idx = match self.tree_state.selected_node() {
+            Some(idx) => idx,
+            None => return QueryStrategy::Next,
+        };
+        let node = match self.oid_tree.get(node_idx) {
+            Some(n) => n,
+            None => return QueryStrategy::Next,
+        };
+
+        // Branch nodes (MODULE-IDENTITY, table entries, OID branches) always use GETNEXT/WALK
+        if !node.children.is_empty() {
+            return QueryStrategy::Next;
+        }
+
+        // Leaf nodes: determine strategy from MIB metadata
+        if let Some(ref mib_obj) = node.mib_object {
+            if mib_obj.access.is_some() {
+                // OBJECT-TYPE: scalar or table column?
+                if self.is_table_column(node_idx) {
+                    QueryStrategy::Next
+                } else {
+                    QueryStrategy::Scalar // append .0
+                }
+            } else {
+                // OBJECT-IDENTITY or similar: direct GET on exact OID
+                QueryStrategy::Direct
+            }
+        } else {
+            QueryStrategy::Direct // leaf without MIB data
+        }
+    }
+
+    /// Check if a node is a table column (parent has INDEX clause).
+    fn is_table_column(&self, node_idx: mib_parser::NodeIndex) -> bool {
+        if let Some(node) = self.oid_tree.get(node_idx)
+            && let Some(parent_idx) = node.parent
+            && let Some(parent) = self.oid_tree.get(parent_idx)
+            && let Some(ref mib_obj) = parent.mib_object
+        {
+            return mib_obj.index_clause.is_some();
+        }
+        false
+    }
+
+    /// Send a GET request with `.0` appended (for scalar OBJECT-TYPEs).
+    fn send_scalar_get(&mut self) {
+        if self.inflight_op.is_some() {
+            return;
+        }
+        if !matches!(self.connection, ConnectionState::Connected { .. }) {
+            return;
+        }
+        let oid = match self.selected_oid() {
+            Some(oid) => oid,
+            None => return,
+        };
+        // Append .0 for scalar instance
+        let mut components = oid.components().to_vec();
+        components.push(0);
+        let scalar_oid = mib_parser::Oid::new(components);
+        if let Some(ref worker) = self.worker
+            && worker.try_send(SnmpRequest::Get(scalar_oid)).is_ok()
+        {
+            self.inflight_op = Some(OperationType::Get);
+        }
+    }
+
     /// Handle an SNMP response from the background worker.
     pub fn handle_snmp_response(&mut self, response: SnmpResponse) {
         self.inflight_op = None;
@@ -396,6 +489,13 @@ impl App {
                     SnmpResult::Ok(_) => {
                         if let Some((host, version)) = self.pending_connect_info.take() {
                             self.connection = ConnectionState::Connected { host, version };
+                            // 9.1: Persist connection settings to config file
+                            config::save_connection_settings(
+                                &self.connect_host,
+                                self.connect_port,
+                                &self.connect_version,
+                                &self.connect_community,
+                            );
                         }
                     }
                     SnmpResult::Error(e) => {
@@ -428,34 +528,47 @@ impl App {
     }
 
     /// Convert an SnmpResponse to a ResultEntry and push it to the results panel.
+    ///
+    /// Header displays numeric OID; value lines display resolved name with type prefix.
     fn push_result_entry(&mut self, response: &SnmpResponse) {
-        let target = match &self.connection {
-            ConnectionState::Connected { host, .. } => host.clone(),
-            _ => "N/A".to_string(),
-        };
-
-        // For Value results, use the response OID (the actual instance OID)
-        // rather than the request OID (which may be a base/object-type OID)
-        let (display_oid, result) = match &response.result {
+        let (display_oid, object_name, result) = match &response.result {
             SnmpResult::Value(resp_oid, value) => {
-                (resp_oid.to_string(), ResultValue::Single(value.to_string()))
+                let name = self.oid_tree.resolve_name(resp_oid);
+                let formatted = format!("{}: {}", value.type_name(), value);
+                (resp_oid.to_string(), name, ResultValue::Single(formatted))
             }
             SnmpResult::MultiValue(pairs) => {
-                let formatted: Vec<(String, String)> = pairs
+                let total = pairs.len();
+                let limit = self.max_walk_entries;
+                let mut formatted: Vec<(String, String)> = pairs
                     .iter()
-                    .map(|(oid, val)| (oid.to_string(), val.to_string()))
+                    .take(limit)
+                    .map(|(oid, val)| {
+                        let name = self.oid_tree.resolve_name(oid);
+                        let typed_val = format!("{}: {}", val.type_name(), val);
+                        (name, typed_val)
+                    })
                     .collect();
+                if total > limit {
+                    formatted.push((
+                        String::new(),
+                        format!("... ({} more entries truncated)", total - limit),
+                    ));
+                }
                 (
                     response.request_oid.to_string(),
+                    String::new(),
                     ResultValue::Multiple(formatted),
                 )
             }
             SnmpResult::Ok(msg) => (
                 response.request_oid.to_string(),
+                String::new(),
                 ResultValue::Single(msg.clone()),
             ),
             SnmpResult::Error(e) => (
                 response.request_oid.to_string(),
+                String::new(),
                 ResultValue::Error(e.clone()),
             ),
         };
@@ -463,13 +576,55 @@ impl App {
         let entry = ResultEntry {
             operation: response.operation,
             oid: display_oid,
-            target,
+            object_name,
             result,
             timestamp: SystemTime::now(),
         };
 
         self.results_state.entries.push(entry);
         // Auto-scroll will be applied in draw
+    }
+
+    /// Copy the most recent result entry's value to system clipboard.
+    fn copy_selected_result(&mut self) {
+        if let Some(entry) = self.results_state.entries.last() {
+            let text = match &entry.result {
+                ResultValue::Single(v) => {
+                    if entry.object_name.is_empty() {
+                        v.clone()
+                    } else {
+                        format!("{} = {}", entry.object_name, v)
+                    }
+                }
+                ResultValue::Multiple(pairs) => pairs
+                    .iter()
+                    .map(|(name, val)| format!("{} = {}", name, val))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                ResultValue::Error(e) => format!("{} -> {}", entry.oid, e),
+            };
+            // Use OSC 52 escape sequence to set clipboard via terminal emulator.
+            // This works in most modern terminals including over SSH.
+            use base64::Engine;
+            use std::io::Write;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+            let osc52 = format!("\x1b]52;c;{}\x07", encoded);
+            let result = std::io::stdout()
+                .write_all(osc52.as_bytes())
+                .and_then(|_| std::io::stdout().flush());
+            match result {
+                Ok(()) => {
+                    self.status_message =
+                        Some(("Copied to clipboard".to_string(), std::time::Instant::now()));
+                }
+                Err(_) => {
+                    self.status_message = Some((
+                        "Failed to copy to clipboard".to_string(),
+                        std::time::Instant::now(),
+                    ));
+                }
+            }
+        }
     }
 
     /// Open the SET modal for the currently selected OID.
@@ -665,18 +820,21 @@ impl App {
             Message::ResultsJumpBottom => {
                 self.results_state.jump_bottom();
             }
-            Message::SnmpGet => {
-                // Smart GET: use GETNEXT to auto-discover the first instance
-                // (handles both scalar .0 and table column .1 correctly)
-                self.send_snmp_request(SnmpRequest::GetNext);
-            }
-            Message::SnmpGetNext => {
-                // Advancing GETNEXT: continue from last returned OID if available
-                self.send_advancing_getnext();
-            }
-            Message::SnmpWalk => {
-                self.send_snmp_request(SnmpRequest::Walk);
-            }
+            Message::SnmpGet => match self.query_strategy() {
+                QueryStrategy::Scalar => self.send_scalar_get(),
+                QueryStrategy::Direct => self.send_snmp_request(SnmpRequest::Get),
+                QueryStrategy::Next => self.send_snmp_request(SnmpRequest::GetNext),
+            },
+            Message::SnmpGetNext => match self.query_strategy() {
+                QueryStrategy::Scalar => self.send_scalar_get(),
+                QueryStrategy::Direct => self.send_snmp_request(SnmpRequest::Get),
+                QueryStrategy::Next => self.send_advancing_getnext(),
+            },
+            Message::SnmpWalk => match self.query_strategy() {
+                QueryStrategy::Scalar => self.send_scalar_get(),
+                QueryStrategy::Direct => self.send_snmp_request(SnmpRequest::Get),
+                QueryStrategy::Next => self.send_snmp_request(SnmpRequest::Walk),
+            },
             Message::OpenConnectModal => {
                 self.modal = Some(Modal::Connect(ConnectModal::new(
                     &self.connect_host,
@@ -690,6 +848,12 @@ impl App {
             }
             Message::OpenSearchModal => {
                 self.modal = Some(Modal::Search(SearchModal::new()));
+            }
+            Message::CopyResult => {
+                self.copy_selected_result();
+            }
+            Message::ToggleHelp => {
+                self.show_help = !self.show_help;
             }
             Message::ClearResults => {
                 self.results_state.entries.clear();

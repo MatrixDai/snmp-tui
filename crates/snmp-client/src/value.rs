@@ -20,6 +20,27 @@ pub enum SnmpValue {
     EndOfMibView,
 }
 
+impl SnmpValue {
+    /// Return the SNMP type label for display (e.g., "INTEGER", "STRING", "Timeticks").
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Self::Integer(_) => "INTEGER",
+            Self::OctetString(_) => "STRING",
+            Self::ObjectIdentifier(_) => "OID",
+            Self::IpAddress(_) => "IpAddress",
+            Self::Counter32(_) => "Counter32",
+            Self::Gauge32(_) => "Gauge32",
+            Self::TimeTicks(_) => "Timeticks",
+            Self::Counter64(_) => "Counter64",
+            Self::Opaque(_) => "Opaque",
+            Self::Null => "NULL",
+            Self::NoSuchObject => "noSuchObject",
+            Self::NoSuchInstance => "noSuchInstance",
+            Self::EndOfMibView => "endOfMibView",
+        }
+    }
+}
+
 impl fmt::Display for SnmpValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
