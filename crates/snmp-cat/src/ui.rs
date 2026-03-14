@@ -982,7 +982,12 @@ fn draw_help_overlay(frame: &mut Frame) {
         ),
         help_line("    gg", "Jump to top", key_style, desc_style),
         help_line("    G", "Jump to bottom", key_style, desc_style),
-        help_line("    r", "Reset tree to initial state", key_style, desc_style),
+        help_line(
+            "    r",
+            "Reset tree to initial state",
+            key_style,
+            desc_style,
+        ),
         help_line("    Space", "GET selected OID", key_style, desc_style),
         help_line("    n", "GETNEXT (advancing)", key_style, desc_style),
         help_line("    w", "WALK subtree", key_style, desc_style),
