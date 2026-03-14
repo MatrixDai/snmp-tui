@@ -390,6 +390,15 @@ impl App {
         self.oid_tree.resolve_oid(node_idx)
     }
 
+    /// Check if the selected tree node is a leaf (no children = instance OID).
+    fn selected_node_is_leaf(&self) -> bool {
+        self.tree_state
+            .selected_node()
+            .and_then(|idx| self.oid_tree.get(idx))
+            .map(|n| n.children.is_empty())
+            .unwrap_or(false)
+    }
+
     /// Handle an SNMP response from the background worker.
     pub fn handle_snmp_response(&mut self, response: SnmpResponse) {
         self.inflight_op = None;
@@ -740,16 +749,30 @@ impl App {
                 self.results_state.jump_bottom();
             }
             Message::SnmpGet => {
-                // Smart GET: use GETNEXT to auto-discover the first instance
-                // (handles both scalar .0 and table column .1 correctly)
-                self.send_snmp_request(SnmpRequest::GetNext);
+                if self.selected_node_is_leaf() {
+                    // Leaf node (instance OID like sysUpTimeInstance) — direct GET
+                    self.send_snmp_request(SnmpRequest::Get);
+                } else {
+                    // Object type — use GETNEXT to auto-discover first instance
+                    self.send_snmp_request(SnmpRequest::GetNext);
+                }
             }
             Message::SnmpGetNext => {
-                // Advancing GETNEXT: continue from last returned OID if available
-                self.send_advancing_getnext();
+                if self.selected_node_is_leaf() {
+                    // Leaf node — direct GET (GETNEXT would leave the subtree)
+                    self.send_snmp_request(SnmpRequest::Get);
+                } else {
+                    // Advancing GETNEXT for table row traversal
+                    self.send_advancing_getnext();
+                }
             }
             Message::SnmpWalk => {
-                self.send_snmp_request(SnmpRequest::Walk);
+                if self.selected_node_is_leaf() {
+                    // Leaf node — single GET (walk on instance OID yields 0 results)
+                    self.send_snmp_request(SnmpRequest::Get);
+                } else {
+                    self.send_snmp_request(SnmpRequest::Walk);
+                }
             }
             Message::OpenConnectModal => {
                 self.modal = Some(Modal::Connect(ConnectModal::new(
