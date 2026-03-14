@@ -100,9 +100,13 @@ pub enum Message {
     InlineSearchClose,
     InlineSearchChar(char),
     InlineSearchBackspace,
-    InlineSearchNext,
-    InlineSearchPrev,
     InlineSearchConfirm,
+
+    // Post-confirmation search navigation (n/N after Enter)
+    DetailSearchNext,
+    DetailSearchPrev,
+    ResultsSearchNext,
+    ResultsSearchPrev,
 
     // Prefix key handling
     /// First `g` press — wait for second key
@@ -115,9 +119,13 @@ pub enum Message {
 }
 
 /// Inline search state shared by Detail and Results panels.
+///
+/// Two-phase search: `active` = typing input, `confirmed` = navigating matches.
 pub struct PanelSearch {
-    /// Whether the search bar is active (visible, accepting input).
+    /// Whether the search input bar is active (accepting typed input).
     pub active: bool,
+    /// Whether a search has been confirmed (matches highlighted, n/N navigates).
+    pub confirmed: bool,
     /// The current search query string.
     pub query: String,
     /// Indices of matching lines (into the rendered lines Vec).
@@ -130,6 +138,7 @@ impl PanelSearch {
     pub fn new() -> Self {
         Self {
             active: false,
+            confirmed: false,
             query: String::new(),
             matches: Vec::new(),
             current_match: 0,
@@ -138,13 +147,27 @@ impl PanelSearch {
 
     pub fn activate(&mut self) {
         self.active = true;
+        self.confirmed = false;
         self.query.clear();
         self.matches.clear();
         self.current_match = 0;
     }
 
+    /// Confirm the search: close input bar but keep matches for n/N navigation.
+    pub fn confirm(&mut self) {
+        self.active = false;
+        if !self.query.is_empty() {
+            self.confirmed = true;
+        }
+    }
+
+    /// Cancel search entirely: close input and clear all state.
     pub fn deactivate(&mut self) {
         self.active = false;
+        self.confirmed = false;
+        self.query.clear();
+        self.matches.clear();
+        self.current_match = 0;
     }
 
     pub fn type_char(&mut self, c: char) {
@@ -418,7 +441,7 @@ impl App {
             pending_g: false,
             show_help: false,
             status_message: None,
-            max_walk_entries: 5000,
+            max_walk_entries: 20000,
         }
     }
 
@@ -994,9 +1017,14 @@ impl App {
                 FocusedPanel::Results => self.results_state.search.activate(),
                 _ => {}
             },
-            Message::InlineSearchClose | Message::InlineSearchConfirm => match self.focused {
+            Message::InlineSearchClose => match self.focused {
                 FocusedPanel::Detail => self.detail_state.search.deactivate(),
                 FocusedPanel::Results => self.results_state.search.deactivate(),
+                _ => {}
+            },
+            Message::InlineSearchConfirm => match self.focused {
+                FocusedPanel::Detail => self.detail_state.search.confirm(),
+                FocusedPanel::Results => self.results_state.search.confirm(),
                 _ => {}
             },
             Message::InlineSearchChar(c) => match self.focused {
@@ -1009,42 +1037,36 @@ impl App {
                 FocusedPanel::Results => self.results_state.search.backspace(),
                 _ => {}
             },
-            Message::InlineSearchNext => match self.focused {
-                FocusedPanel::Detail => {
-                    self.detail_state.search.next_match();
-                    if let Some(line) = self.detail_state.search.current_line() {
-                        self.detail_state.scroll_offset =
-                            line.saturating_sub(self.detail_state.viewport_height / 2);
-                    }
+            Message::DetailSearchNext => {
+                self.detail_state.search.next_match();
+                if let Some(line) = self.detail_state.search.current_line() {
+                    self.detail_state.scroll_offset =
+                        line.saturating_sub(self.detail_state.viewport_height / 2);
                 }
-                FocusedPanel::Results => {
-                    self.results_state.search.next_match();
-                    if let Some(line) = self.results_state.search.current_line() {
-                        self.results_state.scroll_offset =
-                            line.saturating_sub(self.results_state.viewport_height / 2);
-                        self.results_state.auto_scroll = false;
-                    }
+            }
+            Message::DetailSearchPrev => {
+                self.detail_state.search.prev_match();
+                if let Some(line) = self.detail_state.search.current_line() {
+                    self.detail_state.scroll_offset =
+                        line.saturating_sub(self.detail_state.viewport_height / 2);
                 }
-                _ => {}
-            },
-            Message::InlineSearchPrev => match self.focused {
-                FocusedPanel::Detail => {
-                    self.detail_state.search.prev_match();
-                    if let Some(line) = self.detail_state.search.current_line() {
-                        self.detail_state.scroll_offset =
-                            line.saturating_sub(self.detail_state.viewport_height / 2);
-                    }
+            }
+            Message::ResultsSearchNext => {
+                self.results_state.search.next_match();
+                if let Some(line) = self.results_state.search.current_line() {
+                    self.results_state.scroll_offset =
+                        line.saturating_sub(self.results_state.viewport_height / 2);
+                    self.results_state.auto_scroll = false;
                 }
-                FocusedPanel::Results => {
-                    self.results_state.search.prev_match();
-                    if let Some(line) = self.results_state.search.current_line() {
-                        self.results_state.scroll_offset =
-                            line.saturating_sub(self.results_state.viewport_height / 2);
-                        self.results_state.auto_scroll = false;
-                    }
+            }
+            Message::ResultsSearchPrev => {
+                self.results_state.search.prev_match();
+                if let Some(line) = self.results_state.search.current_line() {
+                    self.results_state.scroll_offset =
+                        line.saturating_sub(self.results_state.viewport_height / 2);
+                    self.results_state.auto_scroll = false;
                 }
-                _ => {}
-            },
+            }
             Message::PrefixG => {
                 self.pending_g = true;
             }

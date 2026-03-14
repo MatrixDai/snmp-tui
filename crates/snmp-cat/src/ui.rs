@@ -193,8 +193,9 @@ fn draw_detail_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let search_active = app.detail_state.search.active;
-    let (content_area, search_area) = if search_active {
+    let search_input = app.detail_state.search.active;
+    let search_highlighting = search_input || app.detail_state.search.confirmed;
+    let (content_area, search_area) = if search_input {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(0), Constraint::Length(1)])
@@ -209,10 +210,12 @@ fn draw_detail_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     let viewport_height = content_area.height as usize;
 
     // Update search matches
-    app.detail_state.search.update_matches(&lines);
+    if search_highlighting {
+        app.detail_state.search.update_matches(&lines);
+    }
 
     // Auto-scroll to current match
-    if search_active && let Some(match_line) = app.detail_state.search.current_line() {
+    if search_input && let Some(match_line) = app.detail_state.search.current_line() {
         let half = viewport_height / 2;
         app.detail_state.scroll_offset = match_line.saturating_sub(half);
     }
@@ -231,7 +234,7 @@ fn draw_detail_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     let scroll = app.detail_state.scroll_offset;
-    let query = if search_active && !app.detail_state.search.query.is_empty() {
+    let query = if search_highlighting && !app.detail_state.search.query.is_empty() {
         Some(app.detail_state.search.query.clone())
     } else {
         None
@@ -395,8 +398,9 @@ fn draw_results_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let search_active = app.results_state.search.active;
-    let (content_area, search_area) = if search_active {
+    let search_input = app.results_state.search.active;
+    let search_highlighting = search_input || app.results_state.search.confirmed;
+    let (content_area, search_area) = if search_input {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(0), Constraint::Length(1)])
@@ -428,10 +432,12 @@ fn draw_results_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     app.results_state.total_lines = total_lines;
 
     // Update search matches
-    app.results_state.search.update_matches(&lines);
+    if search_highlighting {
+        app.results_state.search.update_matches(&lines);
+    }
 
     // Auto-scroll to current match when searching
-    if search_active && let Some(match_line) = app.results_state.search.current_line() {
+    if search_input && let Some(match_line) = app.results_state.search.current_line() {
         let half = viewport_height / 2;
         app.results_state.scroll_offset = match_line.saturating_sub(half);
         app.results_state.auto_scroll = false;
@@ -450,7 +456,7 @@ fn draw_results_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     let scroll = app.results_state.scroll_offset;
-    let query = if search_active && !app.results_state.search.query.is_empty() {
+    let query = if search_highlighting && !app.results_state.search.query.is_empty() {
         Some(app.results_state.search.query.clone())
     } else {
         None
@@ -587,14 +593,22 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let is_connected = matches!(app.connection, ConnectionState::Connected { .. });
-    let inline_search_active = match app.focused {
-        FocusedPanel::Detail => app.detail_state.search.active,
-        FocusedPanel::Results => app.results_state.search.active,
-        _ => false,
+    let (search_input, search_confirmed) = match app.focused {
+        FocusedPanel::Detail => (
+            app.detail_state.search.active,
+            app.detail_state.search.confirmed,
+        ),
+        FocusedPanel::Results => (
+            app.results_state.search.active,
+            app.results_state.search.confirmed,
+        ),
+        _ => (false, false),
     };
 
-    let hints = if inline_search_active {
-        "[n/N] Next/Prev match  [Enter] Done  [Esc] Cancel".to_string()
+    let hints = if search_input {
+        "Type to search  [Enter] Confirm  [Esc] Cancel".to_string()
+    } else if search_confirmed {
+        "[n/N] Next/Prev match  [/] New search  [Esc] Clear".to_string()
     } else if app.modal.is_some() {
         "[Esc] Cancel  [Tab] Next field  [Enter] Confirm/Cycle".to_string()
     } else {

@@ -72,8 +72,8 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
     // Panel-specific keys
     match app.focused {
         FocusedPanel::Tree => handle_tree_key(key),
-        FocusedPanel::Detail => handle_detail_key(key),
-        FocusedPanel::Results => handle_results_key(key),
+        FocusedPanel::Detail => handle_detail_key(key, app),
+        FocusedPanel::Results => handle_results_key(key, app),
     }
 }
 
@@ -132,24 +132,34 @@ fn handle_tree_key(key: KeyEvent) -> Option<Message> {
     }
 }
 
-fn handle_detail_key(key: KeyEvent) -> Option<Message> {
+fn handle_detail_key(key: KeyEvent, app: &App) -> Option<Message> {
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => Some(Message::DetailScrollDown),
         KeyCode::Char('k') | KeyCode::Up => Some(Message::DetailScrollUp),
         KeyCode::Char('G') => Some(Message::DetailJumpBottom),
         KeyCode::Char('g') => Some(Message::PrefixG),
         KeyCode::Char('/') => Some(Message::InlineSearchOpen),
+        KeyCode::Char('n') if app.detail_state.search.confirmed => Some(Message::DetailSearchNext),
+        KeyCode::Char('N') if app.detail_state.search.confirmed => Some(Message::DetailSearchPrev),
+        KeyCode::Esc if app.detail_state.search.confirmed => Some(Message::InlineSearchClose),
         _ => None,
     }
 }
 
-fn handle_results_key(key: KeyEvent) -> Option<Message> {
+fn handle_results_key(key: KeyEvent, app: &App) -> Option<Message> {
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => Some(Message::ResultsScrollDown),
         KeyCode::Char('k') | KeyCode::Up => Some(Message::ResultsScrollUp),
         KeyCode::Char('G') => Some(Message::ResultsJumpBottom),
         KeyCode::Char('g') => Some(Message::PrefixG),
         KeyCode::Char('/') => Some(Message::InlineSearchOpen),
+        KeyCode::Char('n') if app.results_state.search.confirmed => {
+            Some(Message::ResultsSearchNext)
+        }
+        KeyCode::Char('N') if app.results_state.search.confirmed => {
+            Some(Message::ResultsSearchPrev)
+        }
+        KeyCode::Esc if app.results_state.search.confirmed => Some(Message::InlineSearchClose),
         KeyCode::Char('y') => Some(Message::CopyResult),
         _ => None,
     }
@@ -168,8 +178,6 @@ fn handle_inline_search_key(key: KeyEvent) -> Option<Message> {
         KeyCode::Esc => Some(Message::InlineSearchClose),
         KeyCode::Enter => Some(Message::InlineSearchConfirm),
         KeyCode::Backspace => Some(Message::InlineSearchBackspace),
-        KeyCode::Char('n') if key.modifiers.is_empty() => Some(Message::InlineSearchNext),
-        KeyCode::Char('N') => Some(Message::InlineSearchPrev),
         KeyCode::Char(c) => Some(Message::InlineSearchChar(c)),
         _ => None,
     }
