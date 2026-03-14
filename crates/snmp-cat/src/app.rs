@@ -6,6 +6,16 @@ use tokio::sync::mpsc;
 
 use crate::config;
 use crate::modal::{ConnectModal, Modal, SearchModal, SetModal};
+
+/// SNMP query strategy determined from MIB object metadata.
+enum QueryStrategy {
+    /// Scalar OBJECT-TYPE: GET with `.0` appended.
+    Scalar,
+    /// Instance OID (OBJECT-IDENTITY or leaf without access): GET on exact OID.
+    Direct,
+    /// Table column or branch: GETNEXT to discover instances.
+    Next,
+}
 use crate::tree_state::TreeState;
 
 /// Which panel currently has focus.
@@ -390,13 +400,69 @@ impl App {
         self.oid_tree.resolve_oid(node_idx)
     }
 
-    /// Check if the selected tree node is a leaf (no children = instance OID).
-    fn selected_node_is_leaf(&self) -> bool {
-        self.tree_state
-            .selected_node()
-            .and_then(|idx| self.oid_tree.get(idx))
-            .map(|n| n.children.is_empty())
-            .unwrap_or(false)
+    /// Determine the SNMP query strategy based on MIB object metadata.
+    fn query_strategy(&self) -> QueryStrategy {
+        let node_idx = match self.tree_state.selected_node() {
+            Some(idx) => idx,
+            None => return QueryStrategy::Next,
+        };
+        let node = match self.oid_tree.get(node_idx) {
+            Some(n) => n,
+            None => return QueryStrategy::Next,
+        };
+
+        if let Some(ref mib_obj) = node.mib_object {
+            if mib_obj.access.is_some() {
+                // OBJECT-TYPE: scalar or table column?
+                if self.is_table_column(node_idx) {
+                    QueryStrategy::Next
+                } else {
+                    QueryStrategy::Scalar // append .0
+                }
+            } else {
+                // OBJECT-IDENTITY or similar: direct GET on exact OID
+                QueryStrategy::Direct
+            }
+        } else if node.children.is_empty() {
+            QueryStrategy::Direct // leaf without MIB data
+        } else {
+            QueryStrategy::Next // branch node
+        }
+    }
+
+    /// Check if a node is a table column (parent has INDEX clause).
+    fn is_table_column(&self, node_idx: mib_parser::NodeIndex) -> bool {
+        if let Some(node) = self.oid_tree.get(node_idx)
+            && let Some(parent_idx) = node.parent
+            && let Some(parent) = self.oid_tree.get(parent_idx)
+            && let Some(ref mib_obj) = parent.mib_object
+        {
+            return mib_obj.index_clause.is_some();
+        }
+        false
+    }
+
+    /// Send a GET request with `.0` appended (for scalar OBJECT-TYPEs).
+    fn send_scalar_get(&mut self) {
+        if self.inflight_op.is_some() {
+            return;
+        }
+        if !matches!(self.connection, ConnectionState::Connected { .. }) {
+            return;
+        }
+        let oid = match self.selected_oid() {
+            Some(oid) => oid,
+            None => return,
+        };
+        // Append .0 for scalar instance
+        let mut components = oid.components().to_vec();
+        components.push(0);
+        let scalar_oid = mib_parser::Oid::new(components);
+        if let Some(ref worker) = self.worker
+            && worker.try_send(SnmpRequest::Get(scalar_oid)).is_ok()
+        {
+            self.inflight_op = Some(OperationType::Get);
+        }
     }
 
     /// Handle an SNMP response from the background worker.
@@ -748,32 +814,21 @@ impl App {
             Message::ResultsJumpBottom => {
                 self.results_state.jump_bottom();
             }
-            Message::SnmpGet => {
-                if self.selected_node_is_leaf() {
-                    // Leaf node (instance OID like sysUpTimeInstance) — direct GET
-                    self.send_snmp_request(SnmpRequest::Get);
-                } else {
-                    // Object type — use GETNEXT to auto-discover first instance
-                    self.send_snmp_request(SnmpRequest::GetNext);
-                }
-            }
-            Message::SnmpGetNext => {
-                if self.selected_node_is_leaf() {
-                    // Leaf node — direct GET (GETNEXT would leave the subtree)
-                    self.send_snmp_request(SnmpRequest::Get);
-                } else {
-                    // Advancing GETNEXT for table row traversal
-                    self.send_advancing_getnext();
-                }
-            }
-            Message::SnmpWalk => {
-                if self.selected_node_is_leaf() {
-                    // Leaf node — single GET (walk on instance OID yields 0 results)
-                    self.send_snmp_request(SnmpRequest::Get);
-                } else {
-                    self.send_snmp_request(SnmpRequest::Walk);
-                }
-            }
+            Message::SnmpGet => match self.query_strategy() {
+                QueryStrategy::Scalar => self.send_scalar_get(),
+                QueryStrategy::Direct => self.send_snmp_request(SnmpRequest::Get),
+                QueryStrategy::Next => self.send_snmp_request(SnmpRequest::GetNext),
+            },
+            Message::SnmpGetNext => match self.query_strategy() {
+                QueryStrategy::Scalar => self.send_scalar_get(),
+                QueryStrategy::Direct => self.send_snmp_request(SnmpRequest::Get),
+                QueryStrategy::Next => self.send_advancing_getnext(),
+            },
+            Message::SnmpWalk => match self.query_strategy() {
+                QueryStrategy::Scalar => self.send_scalar_get(),
+                QueryStrategy::Direct => self.send_snmp_request(SnmpRequest::Get),
+                QueryStrategy::Next => self.send_snmp_request(SnmpRequest::Walk),
+            },
             Message::OpenConnectModal => {
                 self.modal = Some(Modal::Connect(ConnectModal::new(
                     &self.connect_host,
