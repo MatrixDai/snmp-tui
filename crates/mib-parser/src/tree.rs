@@ -149,6 +149,50 @@ impl OidTree {
         Some(Oid::new(components))
     }
 
+    /// Resolve a numeric OID to a human-readable name with instance suffix.
+    ///
+    /// Walks the OID components down the tree to find the deepest named node,
+    /// then appends any remaining components as the instance suffix.
+    /// Returns the numeric OID string if no named node is found.
+    ///
+    /// Examples: `1.3.6.1.2.1.1.1.0` → `sysDescr.0`, `1.3.6.1.2.1.2.2.1.2.3` → `ifDescr.3`
+    pub fn resolve_name(&self, oid: &Oid) -> String {
+        let components = oid.components();
+        let mut current = self.root;
+        let mut last_named = (self.root, 0usize); // (node_idx, depth)
+
+        for (i, &subid) in components.iter().enumerate() {
+            let node = &self.nodes[current.0];
+            let child = node
+                .children
+                .iter()
+                .find(|&&c| self.nodes[c.0].subid == subid)
+                .copied();
+            match child {
+                Some(child_idx) => {
+                    current = child_idx;
+                    if !self.nodes[child_idx.0].name.is_empty() {
+                        last_named = (child_idx, i + 1);
+                    }
+                }
+                None => break,
+            }
+        }
+
+        let (named_idx, depth) = last_named;
+        if named_idx == self.root {
+            return oid.to_string(); // no match — fall back to numeric
+        }
+
+        let name = &self.nodes[named_idx.0].name;
+        let suffix: Vec<String> = components[depth..].iter().map(|c| c.to_string()).collect();
+        if suffix.is_empty() {
+            name.clone()
+        } else {
+            format!("{}.{}", name, suffix.join("."))
+        }
+    }
+
     /// Return the total number of nodes (including root).
     pub fn len(&self) -> usize {
         self.nodes.len()

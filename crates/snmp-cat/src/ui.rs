@@ -418,7 +418,8 @@ fn build_results_lines(app: &App) -> Vec<Line<'static>> {
         }
 
         let time_str = format_timestamp(entry.timestamp);
-        if entry.object_name.is_empty() {
+        // Header: [time] OP numeric_oid
+        if entry.oid.is_empty() {
             lines.push(Line::from(vec![
                 Span::styled(format!("[{}] ", time_str), dim_style),
                 Span::styled(format!("{}", entry.operation), header_style),
@@ -427,32 +428,33 @@ fn build_results_lines(app: &App) -> Vec<Line<'static>> {
             lines.push(Line::from(vec![
                 Span::styled(format!("[{}] ", time_str), dim_style),
                 Span::styled(format!("{} ", entry.operation), header_style),
-                Span::styled(entry.object_name.clone(), value_style),
+                Span::styled(entry.oid.clone(), oid_style),
             ]));
         }
 
         match &entry.result {
             ResultValue::Single(val) => {
-                if entry.oid.is_empty() {
-                    // No OID (e.g. CONNECT/DISCONNECT) — just show the message
+                if entry.object_name.is_empty() {
+                    // No resolved name (e.g. CONNECT/DISCONNECT) — just show the message
                     lines.push(Line::from(vec![
                         Span::styled("  ", value_style),
                         Span::styled(val.clone(), value_style),
                     ]));
                 } else {
+                    // Value line: name.instance = Type: value
                     lines.push(Line::from(vec![
                         Span::styled("  ", value_style),
-                        Span::styled(entry.oid.clone(), oid_style),
+                        Span::styled(entry.object_name.clone(), oid_style),
                         Span::styled(" = ", dim_style),
                         Span::styled(val.clone(), value_style),
                     ]));
                 }
             }
             ResultValue::Multiple(pairs) => {
-                for (oid, val) in pairs {
+                for (name, val) in pairs {
                     lines.push(Line::from(vec![
                         Span::styled("  ", value_style),
-                        Span::styled(oid.clone(), oid_style),
+                        Span::styled(name.clone(), oid_style),
                         Span::styled(" = ", dim_style),
                         Span::styled(val.clone(), value_style),
                     ]));

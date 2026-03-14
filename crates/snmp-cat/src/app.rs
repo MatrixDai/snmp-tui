@@ -524,19 +524,14 @@ impl App {
     }
 
     /// Convert an SnmpResponse to a ResultEntry and push it to the results panel.
+    ///
+    /// Header displays numeric OID; value lines display resolved name with type prefix.
     fn push_result_entry(&mut self, response: &SnmpResponse) {
-        let object_name = self
-            .tree_state
-            .selected_node()
-            .and_then(|idx| self.oid_tree.get(idx))
-            .map(|n| n.name.clone())
-            .unwrap_or_default();
-
-        // For Value results, use the response OID (the actual instance OID)
-        // rather than the request OID (which may be a base/object-type OID)
-        let (display_oid, result) = match &response.result {
+        let (display_oid, object_name, result) = match &response.result {
             SnmpResult::Value(resp_oid, value) => {
-                (resp_oid.to_string(), ResultValue::Single(value.to_string()))
+                let name = self.oid_tree.resolve_name(resp_oid);
+                let formatted = format!("{}: {}", value.type_name(), value);
+                (resp_oid.to_string(), name, ResultValue::Single(formatted))
             }
             SnmpResult::MultiValue(pairs) => {
                 let total = pairs.len();
@@ -544,7 +539,11 @@ impl App {
                 let mut formatted: Vec<(String, String)> = pairs
                     .iter()
                     .take(limit)
-                    .map(|(oid, val)| (oid.to_string(), val.to_string()))
+                    .map(|(oid, val)| {
+                        let name = self.oid_tree.resolve_name(oid);
+                        let typed_val = format!("{}: {}", val.type_name(), val);
+                        (name, typed_val)
+                    })
                     .collect();
                 if total > limit {
                     formatted.push((
@@ -554,15 +553,18 @@ impl App {
                 }
                 (
                     response.request_oid.to_string(),
+                    String::new(),
                     ResultValue::Multiple(formatted),
                 )
             }
             SnmpResult::Ok(msg) => (
                 response.request_oid.to_string(),
+                String::new(),
                 ResultValue::Single(msg.clone()),
             ),
             SnmpResult::Error(e) => (
                 response.request_oid.to_string(),
+                String::new(),
                 ResultValue::Error(e.clone()),
             ),
         };
@@ -584,15 +586,15 @@ impl App {
         if let Some(entry) = self.results_state.entries.last() {
             let text = match &entry.result {
                 ResultValue::Single(v) => {
-                    if entry.oid.is_empty() {
+                    if entry.object_name.is_empty() {
                         v.clone()
                     } else {
-                        format!("{} = {}", entry.oid, v)
+                        format!("{} = {}", entry.object_name, v)
                     }
                 }
                 ResultValue::Multiple(pairs) => pairs
                     .iter()
-                    .map(|(oid, val)| format!("{} = {}", oid, val))
+                    .map(|(name, val)| format!("{} = {}", name, val))
                     .collect::<Vec<_>>()
                     .join("\n"),
                 ResultValue::Error(e) => format!("{} -> {}", entry.oid, e),
