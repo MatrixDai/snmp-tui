@@ -58,6 +58,7 @@ pub enum Message {
     TreeCollapse,
     TreeJumpTop,
     TreeJumpBottom,
+    TreeReset,
 
     // Detail panel
     DetailScrollUp,
@@ -946,6 +947,9 @@ impl App {
             }
             Message::TreeJumpBottom => {
                 self.tree_state.jump_bottom();
+            }
+            Message::TreeReset => {
+                self.tree_state.reset(&self.oid_tree);
             }
             Message::DetailScrollUp => {
                 self.detail_state.scroll_up();

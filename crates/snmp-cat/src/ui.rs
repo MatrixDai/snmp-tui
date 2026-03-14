@@ -84,8 +84,8 @@ fn draw_main_area(frame: &mut Frame, area: Rect, app: &mut App) {
     let right_vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(50), // detail
-            Constraint::Percentage(50), // results
+            Constraint::Percentage(30), // detail
+            Constraint::Percentage(70), // results
         ])
         .split(horizontal[1]);
 
@@ -102,10 +102,22 @@ fn panel_border_style(focused: FocusedPanel, panel: FocusedPanel) -> Style {
     }
 }
 
+fn panel_title_style(focused: FocusedPanel, panel: FocusedPanel) -> Style {
+    if focused == panel {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Gray)
+    }
+}
+
 fn draw_tree_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     let style = panel_border_style(app.focused, FocusedPanel::Tree);
+    let title_style = panel_title_style(app.focused, FocusedPanel::Tree);
     let block = Block::default()
         .title(" MIB Tree ")
+        .title_style(title_style)
         .borders(Borders::ALL)
         .border_style(style);
 
@@ -185,8 +197,10 @@ fn draw_tree_panel(frame: &mut Frame, area: Rect, app: &mut App) {
 
 fn draw_detail_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     let style = panel_border_style(app.focused, FocusedPanel::Detail);
+    let title_style = panel_title_style(app.focused, FocusedPanel::Detail);
     let block = Block::default()
         .title(" Object Detail ")
+        .title_style(title_style)
         .borders(Borders::ALL)
         .border_style(style);
 
@@ -390,8 +404,10 @@ fn build_detail_lines(app: &App) -> Vec<Line<'static>> {
 
 fn draw_results_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     let style = panel_border_style(app.focused, FocusedPanel::Results);
+    let title_style = panel_title_style(app.focused, FocusedPanel::Results);
     let block = Block::default()
         .title(" Query Results ")
+        .title_style(title_style)
         .borders(Borders::ALL)
         .border_style(style);
 
@@ -615,9 +631,9 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
         match app.focused {
             FocusedPanel::Tree => {
                 if is_connected {
-                    "[Tab] Switch  [j/k] Navigate  [Enter] Expand  [Space] GET  [n] GETNEXT  [w] WALK  [s] SET  [o] Connect  [/] Search  [?] Help  [q] Quit".to_string()
+                    "[Tab] Switch  [j/k] Navigate  [Enter] Expand  [r] Reset  [Space] GET  [n] GETNEXT  [w] WALK  [s] SET  [o] Connect  [/] Search  [?] Help  [q] Quit".to_string()
                 } else {
-                    "[Tab] Switch  [j/k] Navigate  [Enter] Expand  [o] Connect first to query  [/] Search  [?] Help  [q] Quit".to_string()
+                    "[Tab] Switch  [j/k] Navigate  [Enter] Expand  [r] Reset  [o] Connect first to query  [/] Search  [?] Help  [q] Quit".to_string()
                 }
             }
             FocusedPanel::Detail => {
@@ -966,6 +982,7 @@ fn draw_help_overlay(frame: &mut Frame) {
         ),
         help_line("    gg", "Jump to top", key_style, desc_style),
         help_line("    G", "Jump to bottom", key_style, desc_style),
+        help_line("    r", "Reset tree to initial state", key_style, desc_style),
         help_line("    Space", "GET selected OID", key_style, desc_style),
         help_line("    n", "GETNEXT (advancing)", key_style, desc_style),
         help_line("    w", "WALK subtree", key_style, desc_style),

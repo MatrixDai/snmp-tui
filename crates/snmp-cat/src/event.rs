@@ -122,6 +122,7 @@ fn handle_tree_key(key: KeyEvent) -> Option<Message> {
         KeyCode::Char('h') | KeyCode::Left => Some(Message::TreeCollapse),
         KeyCode::Char('G') => Some(Message::TreeJumpBottom),
         KeyCode::Char('g') => Some(Message::PrefixG),
+        KeyCode::Char('r') => Some(Message::TreeReset),
         KeyCode::Char('/') => Some(Message::OpenSearchModal),
         // SNMP operations
         KeyCode::Char(' ') => Some(Message::SnmpGet),

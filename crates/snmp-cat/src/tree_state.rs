@@ -175,6 +175,15 @@ impl TreeState {
         self.expanded.contains(&idx)
     }
 
+    /// Reset tree to initial state: collapse all, expand only root.
+    pub fn reset(&mut self, tree: &OidTree) {
+        self.expanded.clear();
+        self.expanded.insert(tree.root());
+        self.selected = 0;
+        self.scroll_offset = 0;
+        self.rebuild_visible(tree);
+    }
+
     /// Navigate to a specific node: expand all ancestors and select it.
     pub fn navigate_to(&mut self, target: NodeIndex, tree: &OidTree) {
         // Walk up from target to root, collecting ancestors
