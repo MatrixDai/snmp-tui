@@ -6,7 +6,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
-use crate::app::{App, ConnectionState, FocusedPanel, ResultValue};
+use crate::app::{App, ConnectionState, FocusedPanel, PanelSearch, ResultValue};
 use crate::modal::Modal;
 
 /// Render the entire application UI.
@@ -193,9 +193,29 @@ fn draw_detail_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    let search_active = app.detail_state.search.active;
+    let (content_area, search_area) = if search_active {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(inner);
+        (chunks[0], Some(chunks[1]))
+    } else {
+        (inner, None)
+    };
+
     let lines = build_detail_lines(app);
     let total_lines = lines.len();
-    let viewport_height = inner.height as usize;
+    let viewport_height = content_area.height as usize;
+
+    // Update search matches
+    app.detail_state.search.update_matches(&lines);
+
+    // Auto-scroll to current match
+    if search_active && let Some(match_line) = app.detail_state.search.current_line() {
+        let half = viewport_height / 2;
+        app.detail_state.scroll_offset = match_line.saturating_sub(half);
+    }
 
     // Update detail state with actual dimensions for scroll bounds
     app.detail_state.total_lines = total_lines;
@@ -211,13 +231,29 @@ fn draw_detail_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     let scroll = app.detail_state.scroll_offset;
+    let query = if search_active && !app.detail_state.search.query.is_empty() {
+        Some(app.detail_state.search.query.clone())
+    } else {
+        None
+    };
     let visible_lines: Vec<Line> = lines
         .into_iter()
         .skip(scroll)
         .take(viewport_height)
+        .map(|line| {
+            if let Some(ref q) = query {
+                highlight_line(line, q)
+            } else {
+                line
+            }
+        })
         .collect();
 
-    frame.render_widget(Paragraph::new(visible_lines), inner);
+    frame.render_widget(Paragraph::new(visible_lines), content_area);
+
+    if let Some(sa) = search_area {
+        draw_search_bar(frame, sa, &app.detail_state.search);
+    }
 }
 
 fn build_detail_lines(app: &App) -> Vec<Line<'static>> {
@@ -359,7 +395,18 @@ fn draw_results_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let viewport_height = inner.height as usize;
+    let search_active = app.results_state.search.active;
+    let (content_area, search_area) = if search_active {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(inner);
+        (chunks[0], Some(chunks[1]))
+    } else {
+        (inner, None)
+    };
+
+    let viewport_height = content_area.height as usize;
     app.results_state.viewport_height = viewport_height;
 
     if app.results_state.entries.is_empty() {
@@ -369,7 +416,10 @@ fn draw_results_panel(frame: &mut Frame, area: Rect, app: &mut App) {
             "Press [o] to connect to an SNMP device."
         };
         let placeholder = Line::from(Span::styled(msg, Style::default().fg(Color::Gray)));
-        frame.render_widget(Paragraph::new(vec![placeholder]), inner);
+        frame.render_widget(Paragraph::new(vec![placeholder]), content_area);
+        if let Some(sa) = search_area {
+            draw_search_bar(frame, sa, &app.results_state.search);
+        }
         return;
     }
 
@@ -377,8 +427,16 @@ fn draw_results_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     let total_lines = lines.len();
     app.results_state.total_lines = total_lines;
 
-    // Auto-scroll to bottom on new entries
-    if app.results_state.auto_scroll && total_lines > viewport_height {
+    // Update search matches
+    app.results_state.search.update_matches(&lines);
+
+    // Auto-scroll to current match when searching
+    if search_active && let Some(match_line) = app.results_state.search.current_line() {
+        let half = viewport_height / 2;
+        app.results_state.scroll_offset = match_line.saturating_sub(half);
+        app.results_state.auto_scroll = false;
+    } else if app.results_state.auto_scroll && total_lines > viewport_height {
+        // Auto-scroll to bottom on new entries
         app.results_state.scroll_offset = total_lines - viewport_height;
     }
 
@@ -392,13 +450,29 @@ fn draw_results_panel(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     let scroll = app.results_state.scroll_offset;
+    let query = if search_active && !app.results_state.search.query.is_empty() {
+        Some(app.results_state.search.query.clone())
+    } else {
+        None
+    };
     let visible_lines: Vec<Line> = lines
         .into_iter()
         .skip(scroll)
         .take(viewport_height)
+        .map(|line| {
+            if let Some(ref q) = query {
+                highlight_line(line, q)
+            } else {
+                line
+            }
+        })
         .collect();
 
-    frame.render_widget(Paragraph::new(visible_lines), inner);
+    frame.render_widget(Paragraph::new(visible_lines), content_area);
+
+    if let Some(sa) = search_area {
+        draw_search_bar(frame, sa, &app.results_state.search);
+    }
 }
 
 fn build_results_lines(app: &App) -> Vec<Line<'static>> {
@@ -513,8 +587,15 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let is_connected = matches!(app.connection, ConnectionState::Connected { .. });
+    let inline_search_active = match app.focused {
+        FocusedPanel::Detail => app.detail_state.search.active,
+        FocusedPanel::Results => app.results_state.search.active,
+        _ => false,
+    };
 
-    let hints = if app.modal.is_some() {
+    let hints = if inline_search_active {
+        "[n/N] Next/Prev match  [Enter] Done  [Esc] Cancel".to_string()
+    } else if app.modal.is_some() {
         "[Esc] Cancel  [Tab] Next field  [Enter] Confirm/Cycle".to_string()
     } else {
         match app.focused {
@@ -526,16 +607,76 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
                 }
             }
             FocusedPanel::Detail => {
-                "[Tab] Switch  [j/k] Scroll  [o] Connect  [/] Search  [?] Help  [q] Quit".to_string()
+                "[Tab] Switch  [j/k] Scroll  [gg] Top  [G] Bottom  [/] Search  [?] Help  [q] Quit".to_string()
             }
             FocusedPanel::Results => {
-                "[Tab] Switch  [j/k] Scroll  [G] Latest  [y] Copy  [o] Connect  [/] Search  [?] Help  [q] Quit".to_string()
+                "[Tab] Switch  [j/k] Scroll  [gg] Top  [G] Latest  [/] Search  [y] Copy  [?] Help  [q] Quit".to_string()
             }
         }
     };
 
     let status = Line::from(Span::styled(hints, Style::default().fg(Color::Gray)));
     frame.render_widget(Paragraph::new(status), area);
+}
+
+// ============================================================
+// Inline search helpers
+// ============================================================
+
+fn draw_search_bar(frame: &mut Frame, area: Rect, search: &PanelSearch) {
+    let info = if search.matches.is_empty() && !search.query.is_empty() {
+        " [No matches]".to_string()
+    } else if !search.matches.is_empty() {
+        format!(" [{}/{}]", search.current_match + 1, search.matches.len())
+    } else {
+        String::new()
+    };
+    let line = Line::from(vec![
+        Span::styled("/", Style::default().fg(Color::Yellow)),
+        Span::styled(search.query.clone(), Style::default().fg(Color::White)),
+        Span::styled(info, Style::default().fg(Color::Gray)),
+    ]);
+    frame.render_widget(Paragraph::new(line), area);
+}
+
+/// Highlight occurrences of `query` (case-insensitive) within a Line by splitting spans.
+fn highlight_line<'a>(line: Line<'a>, query: &str) -> Line<'a> {
+    let highlight_style = Style::default().fg(Color::Black).bg(Color::Yellow);
+    let query_lower = query.to_lowercase();
+    let mut new_spans: Vec<Span<'a>> = Vec::new();
+
+    for span in line.spans {
+        let text = span.content.as_ref();
+        let text_lower = text.to_lowercase();
+        let mut start = 0;
+        let mut found = false;
+
+        while let Some(pos) = text_lower[start..].find(&query_lower) {
+            found = true;
+            let abs_pos = start + pos;
+            // Text before match
+            if abs_pos > start {
+                new_spans.push(Span::styled(text[start..abs_pos].to_string(), span.style));
+            }
+            // Matched text
+            new_spans.push(Span::styled(
+                text[abs_pos..abs_pos + query.len()].to_string(),
+                highlight_style,
+            ));
+            start = abs_pos + query.len();
+        }
+
+        if found {
+            // Remainder after last match
+            if start < text.len() {
+                new_spans.push(Span::styled(text[start..].to_string(), span.style));
+            }
+        } else {
+            new_spans.push(span);
+        }
+    }
+
+    Line::from(new_spans)
 }
 
 // ============================================================
@@ -823,6 +964,10 @@ fn draw_help_overlay(frame: &mut Frame) {
             key_style,
             desc_style,
         ),
+        help_line("    gg", "Jump to top", key_style, desc_style),
+        help_line("    G", "Jump to bottom", key_style, desc_style),
+        help_line("    /", "Search in detail", key_style, desc_style),
+        help_line("    n / N", "Next / prev match", key_style, desc_style),
         Line::from(""),
         Line::from(Span::styled("  Results Panel", heading_style)),
         help_line(
@@ -831,7 +976,10 @@ fn draw_help_overlay(frame: &mut Frame) {
             key_style,
             desc_style,
         ),
+        help_line("    gg", "Jump to top", key_style, desc_style),
         help_line("    G", "Jump to latest", key_style, desc_style),
+        help_line("    /", "Search in results", key_style, desc_style),
+        help_line("    n / N", "Next / prev match", key_style, desc_style),
         help_line(
             "    y",
             "Copy last result to clipboard",
