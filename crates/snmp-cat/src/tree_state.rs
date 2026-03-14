@@ -12,8 +12,6 @@ pub struct TreeState {
     pub scroll_offset: usize,
     /// Flattened list of currently visible nodes: (NodeIndex, depth).
     visible: Vec<(NodeIndex, usize)>,
-    /// Whether `g` was pressed as a prefix key (for `gg` command).
-    pub pending_g: bool,
 }
 
 impl TreeState {
@@ -27,7 +25,6 @@ impl TreeState {
             expanded,
             scroll_offset: 0,
             visible: Vec::new(),
-            pending_g: false,
         };
         state.rebuild_visible(tree);
         state

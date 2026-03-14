@@ -62,10 +62,13 @@ pub enum Message {
     // Detail panel
     DetailScrollUp,
     DetailScrollDown,
+    DetailJumpTop,
+    DetailJumpBottom,
 
     // Results panel
     ResultsScrollUp,
     ResultsScrollDown,
+    ResultsJumpTop,
     ResultsJumpBottom,
 
     // SNMP operations
@@ -92,6 +95,19 @@ pub enum Message {
     ModalDown,
     ModalUp,
 
+    // Inline search (Detail/Results panels)
+    InlineSearchOpen,
+    InlineSearchClose,
+    InlineSearchChar(char),
+    InlineSearchBackspace,
+    InlineSearchConfirm,
+
+    // Post-confirmation search navigation (n/N after Enter)
+    DetailSearchNext,
+    DetailSearchPrev,
+    ResultsSearchNext,
+    ResultsSearchPrev,
+
     // Prefix key handling
     /// First `g` press — wait for second key
     PrefixG,
@@ -102,6 +118,108 @@ pub enum Message {
     Tick,
 }
 
+/// Inline search state shared by Detail and Results panels.
+///
+/// Two-phase search: `active` = typing input, `confirmed` = navigating matches.
+pub struct PanelSearch {
+    /// Whether the search input bar is active (accepting typed input).
+    pub active: bool,
+    /// Whether a search has been confirmed (matches highlighted, n/N navigates).
+    pub confirmed: bool,
+    /// The current search query string.
+    pub query: String,
+    /// Indices of matching lines (into the rendered lines Vec).
+    pub matches: Vec<usize>,
+    /// Index into `matches` for the currently highlighted match.
+    pub current_match: usize,
+}
+
+impl PanelSearch {
+    pub fn new() -> Self {
+        Self {
+            active: false,
+            confirmed: false,
+            query: String::new(),
+            matches: Vec::new(),
+            current_match: 0,
+        }
+    }
+
+    pub fn activate(&mut self) {
+        self.active = true;
+        self.confirmed = false;
+        self.query.clear();
+        self.matches.clear();
+        self.current_match = 0;
+    }
+
+    /// Confirm the search: close input bar but keep matches for n/N navigation.
+    pub fn confirm(&mut self) {
+        self.active = false;
+        if !self.query.is_empty() {
+            self.confirmed = true;
+        }
+    }
+
+    /// Cancel search entirely: close input and clear all state.
+    pub fn deactivate(&mut self) {
+        self.active = false;
+        self.confirmed = false;
+        self.query.clear();
+        self.matches.clear();
+        self.current_match = 0;
+    }
+
+    pub fn type_char(&mut self, c: char) {
+        self.query.push(c);
+    }
+
+    pub fn backspace(&mut self) {
+        self.query.pop();
+    }
+
+    pub fn next_match(&mut self) {
+        if !self.matches.is_empty() {
+            self.current_match = (self.current_match + 1) % self.matches.len();
+        }
+    }
+
+    pub fn prev_match(&mut self) {
+        if !self.matches.is_empty() {
+            self.current_match = if self.current_match == 0 {
+                self.matches.len() - 1
+            } else {
+                self.current_match - 1
+            };
+        }
+    }
+
+    /// Update match list from rendered lines. Case-insensitive substring match.
+    pub fn update_matches(&mut self, lines: &[ratatui::text::Line]) {
+        self.matches.clear();
+        if self.query.is_empty() {
+            self.current_match = 0;
+            return;
+        }
+        let query_lower = self.query.to_lowercase();
+        for (i, line) in lines.iter().enumerate() {
+            let plain: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            if plain.to_lowercase().contains(&query_lower) {
+                self.matches.push(i);
+            }
+        }
+        // Clamp current_match
+        if self.matches.is_empty() || self.current_match >= self.matches.len() {
+            self.current_match = 0;
+        }
+    }
+
+    /// Get the line index of the current match, if any.
+    pub fn current_line(&self) -> Option<usize> {
+        self.matches.get(self.current_match).copied()
+    }
+}
+
 /// State for the detail panel (scrollable view of MIB object metadata).
 pub struct DetailState {
     /// Scroll offset (first visible line).
@@ -110,6 +228,8 @@ pub struct DetailState {
     pub total_lines: usize,
     /// Viewport height (updated each frame from draw).
     pub viewport_height: usize,
+    /// Inline search state.
+    pub search: PanelSearch,
 }
 
 impl DetailState {
@@ -118,6 +238,7 @@ impl DetailState {
             scroll_offset: 0,
             total_lines: 0,
             viewport_height: 0,
+            search: PanelSearch::new(),
         }
     }
 
@@ -133,6 +254,16 @@ impl DetailState {
             && self.scroll_offset < self.total_lines - self.viewport_height
         {
             self.scroll_offset += 1;
+        }
+    }
+
+    pub fn jump_top(&mut self) {
+        self.scroll_offset = 0;
+    }
+
+    pub fn jump_bottom(&mut self) {
+        if self.viewport_height > 0 && self.total_lines > self.viewport_height {
+            self.scroll_offset = self.total_lines - self.viewport_height;
         }
     }
 
@@ -174,6 +305,8 @@ pub struct ResultsState {
     pub viewport_height: usize,
     /// Whether auto-scroll is active (scroll to bottom on new entries).
     pub auto_scroll: bool,
+    /// Inline search state.
+    pub search: PanelSearch,
 }
 
 impl ResultsState {
@@ -184,6 +317,7 @@ impl ResultsState {
             total_lines: 0,
             viewport_height: 0,
             auto_scroll: true,
+            search: PanelSearch::new(),
         }
     }
 
@@ -208,6 +342,11 @@ impl ResultsState {
         {
             self.auto_scroll = true;
         }
+    }
+
+    pub fn jump_top(&mut self) {
+        self.scroll_offset = 0;
+        self.auto_scroll = false;
     }
 
     pub fn jump_bottom(&mut self) {
@@ -267,6 +406,8 @@ pub struct App {
     /// Last OID returned by GETNEXT, keyed by the base (tree node) OID.
     /// Used to advance through table rows on repeated GETNEXT presses.
     last_getnext_oid: Option<(mib_parser::Oid, mib_parser::Oid)>,
+    /// Whether `g` was pressed as a prefix key (for `gg` command).
+    pub pending_g: bool,
     /// Show help overlay.
     pub show_help: bool,
     /// Transient status message (e.g., "Copied to clipboard").
@@ -297,9 +438,10 @@ impl App {
             connect_version: "v2c".to_string(),
             connect_community: "public".to_string(),
             last_getnext_oid: None,
+            pending_g: false,
             show_help: false,
             status_message: None,
-            max_walk_entries: 500,
+            max_walk_entries: 20000,
         }
     }
 
@@ -703,7 +845,7 @@ impl App {
     pub fn update(&mut self, msg: Message) {
         // Clear pending_g on any message that isn't PrefixG
         if !matches!(msg, Message::PrefixG) {
-            self.tree_state.pending_g = false;
+            self.pending_g = false;
         }
 
         // Handle modal messages
@@ -811,11 +953,20 @@ impl App {
             Message::DetailScrollDown => {
                 self.detail_state.scroll_down();
             }
+            Message::DetailJumpTop => {
+                self.detail_state.jump_top();
+            }
+            Message::DetailJumpBottom => {
+                self.detail_state.jump_bottom();
+            }
             Message::ResultsScrollUp => {
                 self.results_state.scroll_up();
             }
             Message::ResultsScrollDown => {
                 self.results_state.scroll_down();
+            }
+            Message::ResultsJumpTop => {
+                self.results_state.jump_top();
             }
             Message::ResultsJumpBottom => {
                 self.results_state.jump_bottom();
@@ -861,8 +1012,63 @@ impl App {
                 self.results_state.total_lines = 0;
                 self.results_state.auto_scroll = true;
             }
+            Message::InlineSearchOpen => match self.focused {
+                FocusedPanel::Detail => self.detail_state.search.activate(),
+                FocusedPanel::Results => self.results_state.search.activate(),
+                _ => {}
+            },
+            Message::InlineSearchClose => match self.focused {
+                FocusedPanel::Detail => self.detail_state.search.deactivate(),
+                FocusedPanel::Results => self.results_state.search.deactivate(),
+                _ => {}
+            },
+            Message::InlineSearchConfirm => match self.focused {
+                FocusedPanel::Detail => self.detail_state.search.confirm(),
+                FocusedPanel::Results => self.results_state.search.confirm(),
+                _ => {}
+            },
+            Message::InlineSearchChar(c) => match self.focused {
+                FocusedPanel::Detail => self.detail_state.search.type_char(c),
+                FocusedPanel::Results => self.results_state.search.type_char(c),
+                _ => {}
+            },
+            Message::InlineSearchBackspace => match self.focused {
+                FocusedPanel::Detail => self.detail_state.search.backspace(),
+                FocusedPanel::Results => self.results_state.search.backspace(),
+                _ => {}
+            },
+            Message::DetailSearchNext => {
+                self.detail_state.search.next_match();
+                if let Some(line) = self.detail_state.search.current_line() {
+                    self.detail_state.scroll_offset =
+                        line.saturating_sub(self.detail_state.viewport_height / 2);
+                }
+            }
+            Message::DetailSearchPrev => {
+                self.detail_state.search.prev_match();
+                if let Some(line) = self.detail_state.search.current_line() {
+                    self.detail_state.scroll_offset =
+                        line.saturating_sub(self.detail_state.viewport_height / 2);
+                }
+            }
+            Message::ResultsSearchNext => {
+                self.results_state.search.next_match();
+                if let Some(line) = self.results_state.search.current_line() {
+                    self.results_state.scroll_offset =
+                        line.saturating_sub(self.results_state.viewport_height / 2);
+                    self.results_state.auto_scroll = false;
+                }
+            }
+            Message::ResultsSearchPrev => {
+                self.results_state.search.prev_match();
+                if let Some(line) = self.results_state.search.current_line() {
+                    self.results_state.scroll_offset =
+                        line.saturating_sub(self.results_state.viewport_height / 2);
+                    self.results_state.auto_scroll = false;
+                }
+            }
             Message::PrefixG => {
-                self.tree_state.pending_g = true;
+                self.pending_g = true;
             }
             Message::Quit => {
                 self.running = false;

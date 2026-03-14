@@ -81,6 +81,7 @@ async fn run(
     app.connect_port = app_config.port;
     app.connect_version = app_config.snmp_version.clone();
     app.connect_community = app_config.community.clone();
+    app.max_walk_entries = app_config.max_walk_entries;
 
     // Initialize SNMP worker
     app.init_worker(app_config.debug);

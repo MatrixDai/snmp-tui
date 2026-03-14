@@ -39,6 +39,10 @@ pub struct CliArgs {
     #[arg(long)]
     pub retries: Option<u32>,
 
+    /// Maximum number of WALK result entries before truncation [default: 20000]
+    #[arg(long)]
+    pub max_walk_entries: Option<usize>,
+
     /// Enable debug logging to /tmp/snmp-cat-debug.log
     #[arg(long)]
     pub debug: bool,
@@ -56,6 +60,7 @@ pub struct FileConfig {
     pub snmp_version: Option<String>,
     pub timeout: Option<u64>,
     pub retries: Option<u32>,
+    pub max_walk_entries: Option<usize>,
 }
 
 /// Resolved application configuration (file + CLI merged).
@@ -70,6 +75,7 @@ pub struct AppConfig {
     pub snmp_version: String,
     pub timeout_ms: u64,
     pub retries: u32,
+    pub max_walk_entries: usize,
     pub debug: bool,
 }
 
@@ -84,6 +90,7 @@ impl Default for AppConfig {
             snmp_version: "v2c".to_string(),
             timeout_ms: 5000,
             retries: 1,
+            max_walk_entries: 20000,
             debug: false,
         }
     }
@@ -128,8 +135,12 @@ pub fn merge_config(file: FileConfig, cli: &CliArgs) -> AppConfig {
             .clone()
             .or(file.snmp_version)
             .unwrap_or_else(|| "v2c".to_string()),
-        timeout_ms: cli.timeout.or(file.timeout).unwrap_or(5000),
+        timeout_ms: cli.timeout.or(file.timeout).unwrap_or(20000),
         retries: cli.retries.or(file.retries).unwrap_or(1),
+        max_walk_entries: cli
+            .max_walk_entries
+            .or(file.max_walk_entries)
+            .unwrap_or(20000),
         debug: cli.debug,
     }
 }

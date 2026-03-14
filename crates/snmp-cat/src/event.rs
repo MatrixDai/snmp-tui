@@ -27,12 +27,18 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
         return handle_modal_key(key, app);
     }
 
+    // If inline search is active, route keys to inline search handler
+    if is_inline_search_active(app) {
+        return handle_inline_search_key(key);
+    }
+
     // Handle `gg` sequence: if `g` was pending and we get another `g`, jump to top
-    if app.tree_state.pending_g
-        && app.focused == FocusedPanel::Tree
-        && key.code == KeyCode::Char('g')
-    {
-        return Some(Message::TreeJumpTop);
+    if app.pending_g && key.code == KeyCode::Char('g') {
+        return match app.focused {
+            FocusedPanel::Tree => Some(Message::TreeJumpTop),
+            FocusedPanel::Detail => Some(Message::DetailJumpTop),
+            FocusedPanel::Results => Some(Message::ResultsJumpTop),
+        };
     }
     // If pending_g but not a second `g`, fall through to normal handling
     // (pending_g will be cleared in update)
@@ -52,7 +58,6 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
         KeyCode::Char('q') => return Some(Message::Quit),
         KeyCode::Char('o') => return Some(Message::OpenConnectModal),
         KeyCode::Char('c') => return Some(Message::ClearResults),
-        KeyCode::Char('/') => return Some(Message::OpenSearchModal),
         KeyCode::Tab => {
             return if key.modifiers.contains(KeyModifiers::SHIFT) {
                 Some(Message::FocusPrev)
@@ -67,8 +72,8 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
     // Panel-specific keys
     match app.focused {
         FocusedPanel::Tree => handle_tree_key(key),
-        FocusedPanel::Detail => handle_detail_key(key),
-        FocusedPanel::Results => handle_results_key(key),
+        FocusedPanel::Detail => handle_detail_key(key, app),
+        FocusedPanel::Results => handle_results_key(key, app),
     }
 }
 
@@ -117,6 +122,7 @@ fn handle_tree_key(key: KeyEvent) -> Option<Message> {
         KeyCode::Char('h') | KeyCode::Left => Some(Message::TreeCollapse),
         KeyCode::Char('G') => Some(Message::TreeJumpBottom),
         KeyCode::Char('g') => Some(Message::PrefixG),
+        KeyCode::Char('/') => Some(Message::OpenSearchModal),
         // SNMP operations
         KeyCode::Char(' ') => Some(Message::SnmpGet),
         KeyCode::Char('n') => Some(Message::SnmpGetNext),
@@ -126,20 +132,53 @@ fn handle_tree_key(key: KeyEvent) -> Option<Message> {
     }
 }
 
-fn handle_detail_key(key: KeyEvent) -> Option<Message> {
+fn handle_detail_key(key: KeyEvent, app: &App) -> Option<Message> {
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => Some(Message::DetailScrollDown),
         KeyCode::Char('k') | KeyCode::Up => Some(Message::DetailScrollUp),
+        KeyCode::Char('G') => Some(Message::DetailJumpBottom),
+        KeyCode::Char('g') => Some(Message::PrefixG),
+        KeyCode::Char('/') => Some(Message::InlineSearchOpen),
+        KeyCode::Char('n') if app.detail_state.search.confirmed => Some(Message::DetailSearchNext),
+        KeyCode::Char('N') if app.detail_state.search.confirmed => Some(Message::DetailSearchPrev),
+        KeyCode::Esc if app.detail_state.search.confirmed => Some(Message::InlineSearchClose),
         _ => None,
     }
 }
 
-fn handle_results_key(key: KeyEvent) -> Option<Message> {
+fn handle_results_key(key: KeyEvent, app: &App) -> Option<Message> {
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => Some(Message::ResultsScrollDown),
         KeyCode::Char('k') | KeyCode::Up => Some(Message::ResultsScrollUp),
         KeyCode::Char('G') => Some(Message::ResultsJumpBottom),
+        KeyCode::Char('g') => Some(Message::PrefixG),
+        KeyCode::Char('/') => Some(Message::InlineSearchOpen),
+        KeyCode::Char('n') if app.results_state.search.confirmed => {
+            Some(Message::ResultsSearchNext)
+        }
+        KeyCode::Char('N') if app.results_state.search.confirmed => {
+            Some(Message::ResultsSearchPrev)
+        }
+        KeyCode::Esc if app.results_state.search.confirmed => Some(Message::InlineSearchClose),
         KeyCode::Char('y') => Some(Message::CopyResult),
+        _ => None,
+    }
+}
+
+fn is_inline_search_active(app: &App) -> bool {
+    match app.focused {
+        FocusedPanel::Detail => app.detail_state.search.active,
+        FocusedPanel::Results => app.results_state.search.active,
+        FocusedPanel::Tree => false,
+    }
+}
+
+fn handle_inline_search_key(key: KeyEvent) -> Option<Message> {
+    match key.code {
+        KeyCode::Esc => Some(Message::InlineSearchClose),
+        KeyCode::Enter => Some(Message::InlineSearchConfirm),
+        KeyCode::Backspace => Some(Message::InlineSearchBackspace),
+        KeyCode::Char(c) => Some(Message::InlineSearchChar(c)),
         _ => None,
     }
 }
