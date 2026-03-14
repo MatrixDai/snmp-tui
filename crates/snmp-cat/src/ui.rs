@@ -418,11 +418,18 @@ fn build_results_lines(app: &App) -> Vec<Line<'static>> {
         }
 
         let time_str = format_timestamp(entry.timestamp);
-        lines.push(Line::from(vec![
-            Span::styled(format!("[{}] ", time_str), dim_style),
-            Span::styled(format!("{}", entry.operation), header_style),
-            Span::styled(format!("  {}", entry.target), dim_style),
-        ]));
+        if entry.object_name.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled(format!("[{}] ", time_str), dim_style),
+                Span::styled(format!("{}", entry.operation), header_style),
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled(format!("[{}] ", time_str), dim_style),
+                Span::styled(format!("{} ", entry.operation), header_style),
+                Span::styled(entry.object_name.clone(), value_style),
+            ]));
+        }
 
         match &entry.result {
             ResultValue::Single(val) => {

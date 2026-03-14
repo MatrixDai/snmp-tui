@@ -137,7 +137,7 @@ impl DetailState {
 pub struct ResultEntry {
     pub operation: OperationType,
     pub oid: String,
-    pub target: String,
+    pub object_name: String,
     pub result: ResultValue,
     pub timestamp: SystemTime,
 }
@@ -450,10 +450,12 @@ impl App {
 
     /// Convert an SnmpResponse to a ResultEntry and push it to the results panel.
     fn push_result_entry(&mut self, response: &SnmpResponse) {
-        let target = match &self.connection {
-            ConnectionState::Connected { host, .. } => host.clone(),
-            _ => "N/A".to_string(),
-        };
+        let object_name = self
+            .tree_state
+            .selected_node()
+            .and_then(|idx| self.oid_tree.get(idx))
+            .map(|n| n.name.clone())
+            .unwrap_or_default();
 
         // For Value results, use the response OID (the actual instance OID)
         // rather than the request OID (which may be a base/object-type OID)
@@ -493,7 +495,7 @@ impl App {
         let entry = ResultEntry {
             operation: response.operation,
             oid: display_oid,
-            target,
+            object_name,
             result,
             timestamp: SystemTime::now(),
         };
@@ -520,7 +522,16 @@ impl App {
                     .join("\n"),
                 ResultValue::Error(e) => format!("{} -> {}", entry.oid, e),
             };
-            match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(&text)) {
+            // Use OSC 52 escape sequence to set clipboard via terminal emulator.
+            // This works in most modern terminals including over SSH.
+            use base64::Engine;
+            use std::io::Write;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+            let osc52 = format!("\x1b]52;c;{}\x07", encoded);
+            let result = std::io::stdout()
+                .write_all(osc52.as_bytes())
+                .and_then(|_| std::io::stdout().flush());
+            match result {
                 Ok(()) => {
                     self.status_message =
                         Some(("Copied to clipboard".to_string(), std::time::Instant::now()));

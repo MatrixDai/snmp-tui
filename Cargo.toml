@@ -34,8 +34,8 @@ toml = "0.8"
 # Error handling
 thiserror = "2"
 
-# Clipboard
-arboard = "3"
+# Encoding
+base64 = "0.22"
 
 # Workspace crates
 mib-parser = { path = "crates/mib-parser" }
