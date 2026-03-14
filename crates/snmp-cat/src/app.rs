@@ -5,7 +5,7 @@ use snmp_client::{OperationType, SnmpRequest, SnmpResponse, SnmpResult, SnmpWork
 use tokio::sync::mpsc;
 
 use crate::config;
-use crate::modal::{ConnectModal, Modal, SearchModal, SetModal};
+use crate::modal::{ConnectModal, MibInfoModal, Modal, SearchModal, SetModal};
 
 /// SNMP query strategy determined from MIB object metadata.
 enum QueryStrategy {
@@ -84,6 +84,7 @@ pub enum Message {
     OpenConnectModal,
     OpenSetModal,
     OpenSearchModal,
+    OpenMibInfoModal,
     ToggleHelp,
     ClearResults,
     ModalClose,
@@ -865,6 +866,7 @@ impl App {
                     }
                     Some(Modal::Set(_)) => self.confirm_set(),
                     Some(Modal::Search(_)) => self.confirm_search(),
+                    Some(Modal::MibInfo(_)) => {} // read-only, no confirm action
                     None => {}
                 }
                 return;
@@ -892,6 +894,11 @@ impl App {
                         let tree = &self.oid_tree;
                         m.type_char(c, tree);
                     }
+                    Some(Modal::MibInfo(m)) => match c {
+                        'j' => m.scroll_down(),
+                        'k' => m.scroll_up(),
+                        _ => {}
+                    },
                     None => {}
                 },
                 Message::ModalBackspace => match &mut self.modal {
@@ -901,6 +908,7 @@ impl App {
                         let tree = &self.oid_tree;
                         m.backspace(tree);
                     }
+                    Some(Modal::MibInfo(_)) => {} // read-only
                     None => {}
                 },
                 Message::ModalCycle => {
@@ -908,16 +916,16 @@ impl App {
                         m.cycle_field();
                     }
                 }
-                Message::ModalDown => {
-                    if let Some(Modal::Search(m)) = &mut self.modal {
-                        m.select_next();
-                    }
-                }
-                Message::ModalUp => {
-                    if let Some(Modal::Search(m)) = &mut self.modal {
-                        m.select_prev();
-                    }
-                }
+                Message::ModalDown => match &mut self.modal {
+                    Some(Modal::Search(m)) => m.select_next(),
+                    Some(Modal::MibInfo(m)) => m.scroll_down(),
+                    _ => {}
+                },
+                Message::ModalUp => match &mut self.modal {
+                    Some(Modal::Search(m)) => m.select_prev(),
+                    Some(Modal::MibInfo(m)) => m.scroll_up(),
+                    _ => {}
+                },
                 _ => {}
             }
             return;
@@ -1003,6 +1011,9 @@ impl App {
             }
             Message::OpenSearchModal => {
                 self.modal = Some(Modal::Search(SearchModal::new()));
+            }
+            Message::OpenMibInfoModal => {
+                self.modal = Some(Modal::MibInfo(MibInfoModal::new(&self.oid_tree)));
             }
             Message::CopyResult => {
                 self.copy_selected_result();
