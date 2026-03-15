@@ -1,5 +1,9 @@
 # snmp-tui
 
+## Claude Skill
+
+This project uses the **`snmp-tui-dev`** Claude Code skill. If it is available in your skill list, use it — it contains detailed architecture notes, build commands, crate roles, and development context for this workspace.
+
 Interactive TUI tool for SNMP MIB exploration and device inspection, written in Rust.
 
 ## Build / Test / Lint
