@@ -365,8 +365,16 @@ impl ResultsState {
 pub enum ConnectionState {
     Disconnected,
     Connecting,
-    Validating { host: String, version: String },
-    Connected { host: String, version: String },
+    Validating {
+        alias: String,
+        host: String,
+        version: String,
+    },
+    Connected {
+        alias: String,
+        host: String,
+        version: String,
+    },
     Error(String),
 }
 
@@ -376,7 +384,7 @@ impl std::fmt::Display for ConnectionState {
             Self::Disconnected => write!(f, "No device"),
             Self::Connecting => write!(f, "Connecting..."),
             Self::Validating { .. } => write!(f, "Validating..."),
-            Self::Connected { host, version } => write!(f, "{} {}", host, version),
+            Self::Connected { host, version, .. } => write!(f, "{} {}", host, version),
             Self::Error(e) => write!(f, "Error: {}", e),
         }
     }
@@ -644,13 +652,19 @@ impl App {
             match &response.result {
                 SnmpResult::Value(_, _) => {
                     if let ConnectionState::Validating {
+                        ref alias,
                         ref host,
                         ref version,
                     } = self.connection
                     {
+                        let alias = alias.clone();
                         let host = host.clone();
                         let version = version.clone();
-                        self.connection = ConnectionState::Connected { host, version };
+                        self.connection = ConnectionState::Connected {
+                            alias,
+                            host,
+                            version,
+                        };
                         // Save connection to config
                         if let Some(ref entry) = self.pending_connection_entry {
                             config::save_connection(entry);
@@ -694,7 +708,16 @@ impl App {
                 match &response.result {
                     SnmpResult::Ok(_) => {
                         if let Some((host, version)) = self.pending_connect_info.take() {
-                            self.connection = ConnectionState::Validating { host, version };
+                            let alias = self
+                                .pending_connection_entry
+                                .as_ref()
+                                .map(|e| e.alias.clone())
+                                .unwrap_or_default();
+                            self.connection = ConnectionState::Validating {
+                                alias,
+                                host,
+                                version,
+                            };
                             // Send validation GET sysDescr.0
                             let sys_descr = mib_parser::Oid::new(vec![1, 3, 6, 1, 2, 1, 1, 1, 0]);
                             if let Some(ref worker) = self.worker {
@@ -1475,6 +1498,7 @@ mod tests {
             format!(
                 "{}",
                 ConnectionState::Connected {
+                    alias: "test".to_string(),
                     host: "192.168.1.1:161".to_string(),
                     version: "v2c".to_string()
                 }
@@ -1485,6 +1509,7 @@ mod tests {
             format!(
                 "{}",
                 ConnectionState::Validating {
+                    alias: "test".to_string(),
                     host: "10.0.0.1:161".to_string(),
                     version: "v2c".to_string()
                 }
@@ -1499,6 +1524,7 @@ mod tests {
         let config = make_test_config();
         let mut app = App::new(tree, &config);
         app.connection = ConnectionState::Connected {
+            alias: "test".to_string(),
             host: "10.0.0.1:161".to_string(),
             version: "v2c".to_string(),
         };

@@ -43,26 +43,60 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 }
 
 fn draw_title_bar(frame: &mut Frame, area: Rect, app: &App) {
-    let conn_span = match &app.connection {
+    let conn_spans: Vec<Span> = match &app.connection {
         ConnectionState::Disconnected => {
-            Span::styled("[No device]", Style::default().fg(Color::Gray))
+            vec![Span::styled(
+                "[No device]",
+                Style::default().fg(Color::Gray),
+            )]
         }
         ConnectionState::Connecting => {
-            Span::styled("[Connecting...]", Style::default().fg(Color::Yellow))
+            vec![Span::styled(
+                "[Connecting...]",
+                Style::default().fg(Color::Yellow),
+            )]
         }
-        ConnectionState::Validating { .. } => {
-            Span::styled("[Validating...]", Style::default().fg(Color::Yellow))
+        ConnectionState::Validating { alias, .. } => {
+            let mut spans = vec![Span::styled(
+                "[Validating...]",
+                Style::default().fg(Color::Yellow),
+            )];
+            if !alias.is_empty() {
+                spans.push(Span::styled(
+                    format!("  {}", alias),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            spans
         }
-        ConnectionState::Connected { host, version } => Span::styled(
-            format!("[{} {}]", host, version),
-            Style::default().fg(Color::Green),
-        ),
+        ConnectionState::Connected {
+            alias,
+            host,
+            version,
+        } => {
+            let mut spans = vec![Span::styled(
+                format!("[{} {}]", host, version),
+                Style::default().fg(Color::Green),
+            )];
+            if !alias.is_empty() {
+                spans.push(Span::styled(
+                    format!("  \u{2022} {}", alias),
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::ITALIC),
+                ));
+            }
+            spans
+        }
         ConnectionState::Error(e) => {
-            Span::styled(format!("[Error: {}]", e), Style::default().fg(Color::Red))
+            vec![Span::styled(
+                format!("[Error: {}]", e),
+                Style::default().fg(Color::Red),
+            )]
         }
     };
 
-    let title = Line::from(vec![
+    let mut title_spans = vec![
         Span::styled(
             "snmp-cat",
             Style::default()
@@ -70,8 +104,10 @@ fn draw_title_bar(frame: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw("  "),
-        conn_span,
-    ]);
+    ];
+    title_spans.extend(conn_spans);
+
+    let title = Line::from(title_spans);
     frame.render_widget(Paragraph::new(title).centered(), area);
 }
 
@@ -620,10 +656,18 @@ fn status_line1(app: &App) -> Line<'static> {
             Style::default().fg(Color::Cyan),
         ))
     } else {
-        Line::from(Span::styled(
-            " [Tab] Switch  [c] Connect  [m] MIBs  [Ctrl+K] Clear  [/] Search  [?] Help  [q] Quit",
-            Style::default().fg(Color::Gray),
-        ))
+        Line::from(vec![
+            Span::styled(
+                " Global: ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "[Tab] Switch  [c] Connect  [m] MIBs  [Ctrl+K] Clear  [/] Search  [?] Help  [q] Quit",
+                Style::default().fg(Color::Gray),
+            ),
+        ])
     }
 }
 
