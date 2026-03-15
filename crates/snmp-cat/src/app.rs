@@ -78,6 +78,8 @@ pub enum Message {
     SnmpWalk,
 
     // Clipboard
+    CopyTreeNode,
+    CopyDetail,
     CopyResult,
 
     // Modal dialogs
@@ -790,6 +792,100 @@ impl App {
         // Auto-scroll will be applied in draw
     }
 
+    /// Copy text to system clipboard via OSC 52 escape sequence.
+    /// Works in most modern terminals including over SSH.
+    fn copy_to_clipboard(&mut self, text: &str) {
+        use base64::Engine;
+        use std::io::Write;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+        let osc52 = format!("\x1b]52;c;{}\x07", encoded);
+        let result = std::io::stdout()
+            .write_all(osc52.as_bytes())
+            .and_then(|_| std::io::stdout().flush());
+        match result {
+            Ok(()) => {
+                self.status_message =
+                    Some(("Copied to clipboard".to_string(), std::time::Instant::now()));
+            }
+            Err(_) => {
+                self.status_message = Some((
+                    "Failed to copy to clipboard".to_string(),
+                    std::time::Instant::now(),
+                ));
+            }
+        }
+    }
+
+    /// Copy selected tree node as "name (OID)".
+    fn copy_tree_node(&mut self) {
+        let node_idx = match self.tree_state.selected_node() {
+            Some(idx) => idx,
+            None => return,
+        };
+        let node = match self.oid_tree.get(node_idx) {
+            Some(n) => n,
+            None => return,
+        };
+        let oid = self
+            .oid_tree
+            .resolve_oid(node_idx)
+            .map(|o| o.to_string())
+            .unwrap_or_default();
+        let name = if node.name.is_empty() {
+            format!("{}", node.subid)
+        } else {
+            node.name.clone()
+        };
+        let text = format!("{} ({})", name, oid);
+        self.copy_to_clipboard(&text);
+    }
+
+    /// Copy the full detail panel content as plain text.
+    fn copy_detail(&mut self) {
+        let node_idx = match self.tree_state.selected_node() {
+            Some(idx) => idx,
+            None => return,
+        };
+        let node = match self.oid_tree.get(node_idx) {
+            Some(n) => n,
+            None => return,
+        };
+        let oid = self
+            .oid_tree
+            .resolve_oid(node_idx)
+            .map(|o| o.to_string())
+            .unwrap_or_default();
+        let name = if node.name.is_empty() {
+            format!("{}", node.subid)
+        } else {
+            node.name.clone()
+        };
+
+        let mut lines = vec![format!("Name: {}", name), format!("OID: {}", oid)];
+
+        if let Some(ref mib_obj) = node.mib_object {
+            lines.push(format!("Module: {}", mib_obj.module));
+            if let Some(ref syntax) = mib_obj.syntax {
+                lines.push(format!("Syntax: {:?}", syntax));
+            }
+            if let Some(ref access) = mib_obj.access {
+                lines.push(format!("Access: {:?}", access));
+            }
+            if let Some(ref status) = mib_obj.status {
+                lines.push(format!("Status: {:?}", status));
+            }
+            if let Some(ref index_clause) = mib_obj.index_clause {
+                lines.push(format!("Index: {}", index_clause.join(", ")));
+            }
+            if let Some(ref desc) = mib_obj.description {
+                lines.push(format!("Description: {}", desc));
+            }
+        }
+
+        let text = lines.join("\n");
+        self.copy_to_clipboard(&text);
+    }
+
     /// Copy the most recent result entry's value to system clipboard.
     fn copy_selected_result(&mut self) {
         if let Some(entry) = self.results_state.entries.last() {
@@ -808,27 +904,7 @@ impl App {
                     .join("\n"),
                 ResultValue::Error(e) => format!("{} -> {}", entry.oid, e),
             };
-            // Use OSC 52 escape sequence to set clipboard via terminal emulator.
-            // This works in most modern terminals including over SSH.
-            use base64::Engine;
-            use std::io::Write;
-            let encoded = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
-            let osc52 = format!("\x1b]52;c;{}\x07", encoded);
-            let result = std::io::stdout()
-                .write_all(osc52.as_bytes())
-                .and_then(|_| std::io::stdout().flush());
-            match result {
-                Ok(()) => {
-                    self.status_message =
-                        Some(("Copied to clipboard".to_string(), std::time::Instant::now()));
-                }
-                Err(_) => {
-                    self.status_message = Some((
-                        "Failed to copy to clipboard".to_string(),
-                        std::time::Instant::now(),
-                    ));
-                }
-            }
+            self.copy_to_clipboard(&text);
         }
     }
 
@@ -1230,6 +1306,12 @@ impl App {
             }
             Message::OpenMibInfoModal => {
                 self.modal = Some(Modal::MibInfo(MibInfoModal::new(&self.oid_tree)));
+            }
+            Message::CopyTreeNode => {
+                self.copy_tree_node();
+            }
+            Message::CopyDetail => {
+                self.copy_detail();
             }
             Message::CopyResult => {
                 self.copy_selected_result();

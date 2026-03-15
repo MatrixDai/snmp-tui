@@ -55,9 +55,11 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
     // Global keys (always active)
     match key.code {
         KeyCode::Char('q') => return Some(Message::Quit),
-        KeyCode::Char('o') => return Some(Message::OpenConnectionManager),
+        KeyCode::Char('c') => return Some(Message::OpenConnectionManager),
         KeyCode::Char('m') => return Some(Message::OpenMibInfoModal),
-        KeyCode::Char('c') => return Some(Message::ClearResults),
+        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            return Some(Message::ClearResults);
+        }
         KeyCode::Tab => {
             return if key.modifiers.contains(KeyModifiers::SHIFT) {
                 Some(Message::FocusPrev)
@@ -118,6 +120,7 @@ fn handle_tree_key(key: KeyEvent) -> Option<Message> {
         KeyCode::Char('n') => Some(Message::SnmpGetNext),
         KeyCode::Char('w') => Some(Message::SnmpWalk),
         KeyCode::Char('s') => Some(Message::OpenSetModal),
+        KeyCode::Char('y') => Some(Message::CopyTreeNode),
         _ => None,
     }
 }
@@ -132,6 +135,7 @@ fn handle_detail_key(key: KeyEvent, app: &App) -> Option<Message> {
         KeyCode::Char('n') if app.detail_state.search.confirmed => Some(Message::DetailSearchNext),
         KeyCode::Char('N') if app.detail_state.search.confirmed => Some(Message::DetailSearchPrev),
         KeyCode::Esc if app.detail_state.search.confirmed => Some(Message::InlineSearchClose),
+        KeyCode::Char('y') => Some(Message::CopyDetail),
         _ => None,
     }
 }
