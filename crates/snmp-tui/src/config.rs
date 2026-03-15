@@ -41,8 +41,10 @@ pub struct ConnectionEntry {
     pub port: u16,
     #[serde(default = "default_version")]
     pub version: String,
-    #[serde(default = "default_community")]
-    pub community: String,
+    #[serde(default = "default_read_community")]
+    pub read_community: String,
+    #[serde(default = "default_write_community")]
+    pub write_community: String,
     // SNMPv3 fields
     #[serde(skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
@@ -62,8 +64,11 @@ fn default_port() -> u16 {
 fn default_version() -> String {
     "v2c".to_string()
 }
-fn default_community() -> String {
+fn default_read_community() -> String {
     "public".to_string()
+}
+fn default_write_community() -> String {
+    "private".to_string()
 }
 
 impl ConnectionEntry {
@@ -115,7 +120,8 @@ impl ConnectionEntry {
             host: self.host.clone(),
             port: self.port,
             version,
-            community: self.community.clone(),
+            read_community: self.read_community.clone(),
+            write_community: self.write_community.clone(),
             timeout_ms,
             retries,
             v3_credentials,
