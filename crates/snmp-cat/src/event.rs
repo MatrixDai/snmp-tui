@@ -57,6 +57,7 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
     match key.code {
         KeyCode::Char('q') => return Some(Message::Quit),
         KeyCode::Char('o') => return Some(Message::OpenConnectModal),
+        KeyCode::Char('m') => return Some(Message::OpenMibInfoModal),
         KeyCode::Char('c') => return Some(Message::ClearResults),
         KeyCode::Tab => {
             return if key.modifiers.contains(KeyModifiers::SHIFT) {

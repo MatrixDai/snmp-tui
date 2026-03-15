@@ -631,9 +631,9 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
         match app.focused {
             FocusedPanel::Tree => {
                 if is_connected {
-                    "[Tab] Switch  [j/k] Navigate  [Enter] Expand  [r] Reset  [Space] GET  [n] GETNEXT  [w] WALK  [s] SET  [o] Connect  [/] Search  [?] Help  [q] Quit".to_string()
+                    "[Tab] Switch  [j/k] Navigate  [Enter] Expand  [r] Reset  [Space] GET  [n] GETNEXT  [w] WALK  [s] SET  [o] Connect  [m] MIBs  [/] Search  [?] Help  [q] Quit".to_string()
                 } else {
-                    "[Tab] Switch  [j/k] Navigate  [Enter] Expand  [r] Reset  [o] Connect first to query  [/] Search  [?] Help  [q] Quit".to_string()
+                    "[Tab] Switch  [j/k] Navigate  [Enter] Expand  [r] Reset  [o] Connect first to query  [m] MIBs  [/] Search  [?] Help  [q] Quit".to_string()
                 }
             }
             FocusedPanel::Detail => {
@@ -734,11 +734,12 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-fn draw_modal(frame: &mut Frame, app: &App) {
-    match &app.modal {
+fn draw_modal(frame: &mut Frame, app: &mut App) {
+    match &mut app.modal {
         Some(Modal::Connect(m)) => draw_connect_modal(frame, m),
         Some(Modal::Set(m)) => draw_set_modal(frame, m),
         Some(Modal::Search(m)) => draw_search_modal(frame, m),
+        Some(Modal::MibInfo(m)) => draw_mib_info_modal(frame, m),
         None => {}
     }
 }
@@ -934,6 +935,90 @@ fn draw_search_modal(frame: &mut Frame, modal: &crate::modal::SearchModal) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
+fn draw_mib_info_modal(frame: &mut Frame, modal: &mut crate::modal::MibInfoModal) {
+    let area = centered_rect(50, 70, frame.area());
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(" Loaded MIB Modules ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let heading_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let name_style = Style::default().fg(Color::White);
+    let count_style = Style::default().fg(Color::Yellow);
+    let dim_style = Style::default().fg(Color::Gray);
+
+    // Reserve 3 lines: header, blank, and hint at bottom
+    let content_height = inner.height as usize;
+    let header_lines = 2; // summary + blank line
+    let footer_lines = 2; // blank line + hint
+    let list_height = content_height.saturating_sub(header_lines + footer_lines);
+    modal.viewport_height = list_height;
+
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!(
+                "  {} modules, {} objects total",
+                modal.modules.len(),
+                modal.total_objects
+            ),
+            heading_style,
+        )),
+        Line::from(""),
+    ];
+
+    let col_width = (inner.width as usize).saturating_sub(6); // padding
+
+    let visible_modules: Vec<&(String, usize)> = modal
+        .modules
+        .iter()
+        .skip(modal.scroll_offset)
+        .take(list_height)
+        .collect();
+
+    for (name, count) in &visible_modules {
+        let padding = col_width.saturating_sub(name.len() + format!("{}", count).len());
+        lines.push(Line::from(vec![
+            Span::styled("  ", name_style),
+            Span::styled((*name).clone(), name_style),
+            Span::styled(" ".repeat(padding), name_style),
+            Span::styled(format!("{}", count), count_style),
+        ]));
+    }
+
+    // Fill remaining space
+    let used = lines.len();
+    let target = content_height.saturating_sub(footer_lines);
+    for _ in used..target {
+        lines.push(Line::from(""));
+    }
+
+    // Scroll indicator
+    let total = modal.modules.len();
+    let scroll_hint = if total > list_height {
+        format!(
+            "  [{}-{} of {}]  [j/k] Scroll  [Esc] Close",
+            modal.scroll_offset + 1,
+            (modal.scroll_offset + list_height).min(total),
+            total,
+        )
+    } else {
+        "  [Esc] Close".to_string()
+    };
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(scroll_hint, dim_style)));
+
+    // Truncate to viewport
+    lines.truncate(content_height);
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
 fn draw_help_overlay(frame: &mut Frame) {
     let area = centered_rect(60, 80, frame.area());
     frame.render_widget(Clear, area);
@@ -961,6 +1046,7 @@ fn draw_help_overlay(frame: &mut Frame) {
             desc_style,
         ),
         help_line("    o", "Open connect dialog", key_style, desc_style),
+        help_line("    m", "Loaded MIB modules", key_style, desc_style),
         help_line("    c", "Clear results", key_style, desc_style),
         help_line("    /", "Search MIB objects", key_style, desc_style),
         help_line("    ?", "Toggle this help", key_style, desc_style),

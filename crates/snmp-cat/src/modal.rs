@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use mib_parser::{NodeIndex, OidTree, Syntax};
 use snmp_client::{AuthProtocol, PrivProtocol, SnmpConfig, SnmpValue, SnmpVersion, V3Credentials};
 
@@ -6,6 +8,7 @@ pub enum Modal {
     Connect(ConnectModal),
     Set(SetModal),
     Search(SearchModal),
+    MibInfo(MibInfoModal),
 }
 
 // ============================================================
@@ -475,6 +478,60 @@ impl SearchModal {
                     break;
                 }
             }
+        }
+    }
+}
+
+// ============================================================
+// MIB Info Modal
+// ============================================================
+
+pub struct MibInfoModal {
+    /// Sorted list of (module_name, object_count).
+    pub modules: Vec<(String, usize)>,
+    /// Total object count across all modules.
+    pub total_objects: usize,
+    /// Scroll offset for the list.
+    pub scroll_offset: usize,
+    /// Viewport height (set during render).
+    pub viewport_height: usize,
+}
+
+impl MibInfoModal {
+    pub fn new(tree: &OidTree) -> Self {
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        for i in 0..tree.node_count() {
+            let idx = NodeIndex::from_raw(i);
+            if let Some(node) = tree.get(idx)
+                && let Some(ref mib_obj) = node.mib_object
+                && !mib_obj.module.is_empty()
+            {
+                *counts.entry(mib_obj.module.clone()).or_insert(0) += 1;
+            }
+        }
+        let total_objects = counts.values().sum();
+        let modules: Vec<(String, usize)> = counts.into_iter().collect();
+        Self {
+            modules,
+            total_objects,
+            scroll_offset: 0,
+            viewport_height: 0,
+        }
+    }
+
+    pub fn scroll_up(&mut self) {
+        if self.scroll_offset > 0 {
+            self.scroll_offset -= 1;
+        }
+    }
+
+    pub fn scroll_down(&mut self) {
+        let total = self.modules.len();
+        if self.viewport_height > 0
+            && total > self.viewport_height
+            && self.scroll_offset < total - self.viewport_height
+        {
+            self.scroll_offset += 1;
         }
     }
 }
