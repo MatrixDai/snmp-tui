@@ -98,7 +98,7 @@ fn draw_title_bar(frame: &mut Frame, area: Rect, app: &App) {
 
     let mut title_spans = vec![
         Span::styled(
-            "snmp-cat",
+            "snmp-tui",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),

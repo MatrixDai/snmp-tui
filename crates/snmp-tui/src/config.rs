@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Interactive TUI tool for SNMP MIB exploration and device inspection.
 #[derive(Parser, Debug)]
-#[command(name = "snmp-cat", version, about)]
+#[command(name = "snmp-tui", version, about)]
 pub struct CliArgs {
     /// Path to additional MIB directory
     #[arg(long = "mib-dir")]
@@ -27,7 +27,7 @@ pub struct CliArgs {
     #[arg(long)]
     pub max_walk_entries: Option<usize>,
 
-    /// Enable debug logging to /tmp/snmp-cat-debug.log
+    /// Enable debug logging to /tmp/snmp-tui-debug.log
     #[arg(long)]
     pub debug: bool,
 }
@@ -123,7 +123,7 @@ impl ConnectionEntry {
     }
 }
 
-/// Configuration loaded from / saved to `~/.snmp-cat/config.toml`.
+/// Configuration loaded from / saved to `~/.snmp-tui/config.toml`.
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct FileConfig {
@@ -165,7 +165,7 @@ impl Default for AppConfig {
     }
 }
 
-/// Load config file from `~/.snmp-cat/config.toml` if it exists.
+/// Load config file from `~/.snmp-tui/config.toml` if it exists.
 pub fn load_config_file() -> FileConfig {
     if let Some(path) = dirs_config_path()
         && path.exists()
@@ -240,7 +240,7 @@ pub fn delete_connection(alias: &str) {
     save_config_file(&config);
 }
 
-/// Save config to `~/.snmp-cat/config.toml`.
+/// Save config to `~/.snmp-tui/config.toml`.
 fn save_config_file(config: &FileConfig) {
     if let Some(dir) = dirs_path() {
         if !dir.exists() {
@@ -259,5 +259,5 @@ fn dirs_config_path() -> Option<PathBuf> {
 }
 
 fn dirs_path() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".snmp-cat"))
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".snmp-tui"))
 }

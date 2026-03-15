@@ -28,16 +28,16 @@ jobs:
         include:
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
-            artifact: snmp-cat-linux-amd64
+            artifact: snmp-tui-linux-amd64
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
-            artifact: snmp-cat-linux-arm64
+            artifact: snmp-tui-linux-arm64
           - target: x86_64-apple-darwin
             os: macos-latest
-            artifact: snmp-cat-macos-amd64
+            artifact: snmp-tui-macos-amd64
           - target: aarch64-apple-darwin
             os: macos-latest
-            artifact: snmp-cat-macos-arm64
+            artifact: snmp-tui-macos-arm64
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -61,10 +61,10 @@ jobs:
           echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
 
       - name: Build release binary
-        run: cargo build --release -p snmp-cat --target ${{ matrix.target }}
+        run: cargo build --release -p snmp-tui --target ${{ matrix.target }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: target/${{ matrix.target }}/release/snmp-cat
+          path: target/${{ matrix.target }}/release/snmp-tui

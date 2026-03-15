@@ -1,5 +1,5 @@
 [package]
-name = "snmp-cat"
+name = "snmp-tui"
 version.workspace = true
 edition.workspace = true
 

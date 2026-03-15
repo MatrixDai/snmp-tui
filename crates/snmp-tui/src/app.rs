@@ -470,7 +470,7 @@ impl App {
     /// Initialize the SNMP worker (must be called from a tokio context).
     pub fn init_worker(&mut self, debug: bool) {
         let debug_log = if debug {
-            Some(std::path::PathBuf::from("/tmp/snmp-cat-debug.log"))
+            Some(std::path::PathBuf::from("/tmp/snmp-tui-debug.log"))
         } else {
             None
         };

@@ -1,4 +1,4 @@
-# snmp-cat
+# snmp-tui
 
 An interactive TUI tool for exploring SNMP MIB trees, querying, and configuring network devices.
 
@@ -19,30 +19,30 @@ An interactive TUI tool for exploring SNMP MIB trees, querying, and configuring 
 
 ```bash
 # Build from source
-git clone https://github.com/MatrixDai/snmp-cat.git
-cd snmp-cat
+git clone https://github.com/MatrixDai/snmp-tui.git
+cd snmp-tui
 cargo build --release
 
-# Binary will be at target/release/snmp-cat
+# Binary will be at target/release/snmp-tui
 ```
 
 ## Usage
 
 ```bash
 # Launch with default MIB directory
-snmp-cat
+snmp-tui
 
 # Load specific MIB files or directories
-snmp-cat --mib-dir /usr/share/snmp/mibs
-snmp-cat --mib-file /path/to/MY-MIB.txt
+snmp-tui --mib-dir /usr/share/snmp/mibs
+snmp-tui --mib-file /path/to/MY-MIB.txt
 
 # Connect to a device on startup
-snmp-cat --host 192.168.1.1 --community public --snmp-version 2c
+snmp-tui --host 192.168.1.1 --community public --snmp-version 2c
 ```
 
 ### Config File
 
-Configuration is stored at `~/.config/snmp-cat/config.toml`:
+Configuration is stored at `~/.config/snmp-tui/config.toml`:
 
 ```toml
 [mibs]
@@ -65,7 +65,7 @@ retries = 1
 
 ## MIB Loading
 
-snmp-cat loads MIB files from configured directories at startup. It resolves IMPORTS dependencies automatically — load order does not matter as long as all referenced MIBs are available.
+snmp-tui loads MIB files from configured directories at startup. It resolves IMPORTS dependencies automatically — load order does not matter as long as all referenced MIBs are available.
 
 Standard RFC MIBs (SNMPv2-SMI, SNMPv2-TC, IF-MIB, etc.) are bundled with the application.
 

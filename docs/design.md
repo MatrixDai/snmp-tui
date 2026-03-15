@@ -1,6 +1,6 @@
-# snmp-cat — High-Level Design
+# snmp-tui — High-Level Design
 
-This document describes the design of snmp-cat's TUI interface and application architecture. For features and usage, see [README.md](../README.md).
+This document describes the design of snmp-tui's TUI interface and application architecture. For features and usage, see [README.md](../README.md).
 
 ---
 
@@ -9,7 +9,7 @@ This document describes the design of snmp-cat's TUI interface and application a
 Three-panel layout with title bar and status bar:
 
 ```
-┌─────────────────────────────── snmp-cat ────────────────────────────────┐
+┌─────────────────────────────── snmp-tui ────────────────────────────────┐
 │ MIB Tree              │ Object Detail                                   │
 │                       │                                                 │
 │ ▸ iso(1)              │  Name:     sysDescr                             │
@@ -74,7 +74,7 @@ Vertical (outer)
 - Error responses displayed inline (e.g., `noSuchObject`, `noSuchInstance`, `timeout`)
 
 **Title Bar**
-- Centered app name: `snmp-cat`
+- Centered app name: `snmp-tui`
 - Right-aligned: connected device info (e.g., `192.168.1.1 v2c`) or `[No device]`
 
 **Status Bar**

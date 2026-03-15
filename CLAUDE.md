@@ -1,4 +1,4 @@
-# snmp-cat
+# snmp-tui
 
 Interactive TUI tool for SNMP MIB exploration and device inspection, written in Rust.
 
@@ -18,7 +18,7 @@ Cargo workspace with 3 crates under `crates/`:
 
 - **`mib-parser`** — pest-based SMIv1/SMIv2 MIB file parser; builds an arena-based OID tree from MIB files
 - **`snmp-client`** — async SNMP v1/v2c/v3 wrapper around the `snmp2` crate; GET/GETNEXT/GETBULK/WALK/SET operations
-- **`snmp-cat`** — TUI binary (ratatui + crossterm); app state, event handling, config loading
+- **`snmp-tui`** — TUI binary (ratatui + crossterm); app state, event handling, config loading
 
 ## Architecture
 

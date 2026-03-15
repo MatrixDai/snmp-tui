@@ -2,7 +2,7 @@
 members = [
     "crates/mib-parser",
     "crates/snmp-client",
-    "crates/snmp-cat",
+    "crates/snmp-tui",
 ]
 resolver = "2"
 

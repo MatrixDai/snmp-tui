@@ -1,13 +1,13 @@
-# snmp-cat — Implementation Tasks
+# snmp-tui — Implementation Tasks
 
-Ordered task breakdown for building snmp-cat. Each milestone groups related tasks; tasks within a milestone are listed in recommended implementation order. Dependencies on prior milestones are noted where relevant.
+Ordered task breakdown for building snmp-tui. Each milestone groups related tasks; tasks within a milestone are listed in recommended implementation order. Dependencies on prior milestones are noted where relevant.
 
 ---
 
 ## Milestone 1: Project Scaffolding
 
-- [x] **1.1** Create root `Cargo.toml` with workspace members: `crates/mib-parser`, `crates/snmp-client`, `crates/snmp-cat`
-- [x] **1.2** Stub out each crate with `Cargo.toml` + `lib.rs` (or `main.rs` for snmp-cat)
+- [x] **1.1** Create root `Cargo.toml` with workspace members: `crates/mib-parser`, `crates/snmp-client`, `crates/snmp-tui`
+- [x] **1.2** Stub out each crate with `Cargo.toml` + `lib.rs` (or `main.rs` for snmp-tui)
 - [x] **1.3** Define shared types used across crates — `Oid` (numeric OID vector), `MibObject` (name, oid, module, syntax, access, status, description, index clause), `OidTree` (arena-based `Vec<Node>` with index references) — either in `mib-parser` (re-exported) or a shared module
 - [x] **1.4** Add a `justfile` or `Makefile` with targets: `build`, `test`, `clippy`, `fmt-check`
 - [x] **1.5** Confirm `cargo build`, `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check` all pass on the empty workspace
@@ -49,13 +49,13 @@ Ordered task breakdown for building snmp-cat. Each milestone groups related task
 
 ---
 
-## Milestone 4: TUI Shell (`crates/snmp-cat`)
+## Milestone 4: TUI Shell (`crates/snmp-tui`)
 
 > Depends on: Milestone 1
 
 - [x] **4.1** Add dependencies: `ratatui`, `crossterm`, `clap`, `serde`, `toml`, `tokio`
 - [x] **4.2** Define CLI args with clap: `--mib-dir`, `--mib-file`, `--host`, `--port`, `--community`, `--snmp-version`, `--timeout`, `--retries`
-- [x] **4.3** Implement config file loading from `~/.config/snmp-cat/config.toml` — merge with CLI args (CLI takes precedence)
+- [x] **4.3** Implement config file loading from `~/.config/snmp-tui/config.toml` — merge with CLI args (CLI takes precedence)
 - [x] **4.4** Terminal setup: enter alternate screen, enable raw mode; teardown on exit (including panic hook for clean restore)
 - [x] **4.5** Event loop skeleton: `crossterm::event::poll(250ms)` → convert key events to `Message` → `update(&mut app, msg)` → `view(&app, &mut frame)`
 - [x] **4.6** Define `App` struct (model): `focused: FocusedPanel`, `tree: TreeState`, `detail: DetailState`, `results: ResultsState`, `modal: Option<Modal>`, `connection: Option<DeviceConnection>`, `mib_store: OidTree`
@@ -126,7 +126,7 @@ Ordered task breakdown for building snmp-cat. Each milestone groups related task
 
 > Depends on: all prior milestones
 
-- [x] **9.1** Config file persistence — save connection settings and MIB directories to `~/.snmp-cat/config.toml` on change
+- [x] **9.1** Config file persistence — save connection settings and MIB directories to `~/.snmp-tui/config.toml` on change
 - [x] **9.2** `y` key (results panel focused) → copy selected result value to system clipboard
 - [x] **9.3** `?` key → toggle help overlay showing all key bindings
 - [x] **9.4** Color theme and consistent styling across all panels and modals
