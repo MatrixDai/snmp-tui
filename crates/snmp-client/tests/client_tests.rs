@@ -198,24 +198,36 @@ fn v3_config_auth_priv() {
 
 #[test]
 fn session_connect_to_nonexistent_host_timeout() {
-    use snmp_client::SnmpSession;
+    // Run on a thread with a larger stack to avoid stack overflow
+    // in CI environments where the default stack is small and
+    // snmp2's internal allocations are deep.
+    let result = std::thread::Builder::new()
+        .stack_size(4 * 1024 * 1024) // 4 MB
+        .spawn(|| {
+            use snmp_client::SnmpSession;
 
-    // Use a very short timeout to a non-routable address
-    let config = SnmpConfig {
-        host: "192.0.2.1".to_string(), // TEST-NET, should not respond
-        port: 16199,
-        timeout_ms: 100,
-        retries: 0,
-        ..Default::default()
-    };
+            // Use a very short timeout to a non-routable address
+            let config = SnmpConfig {
+                host: "192.0.2.1".to_string(), // TEST-NET, should not respond
+                port: 16199,
+                timeout_ms: 100,
+                retries: 0,
+                ..Default::default()
+            };
 
-    // Session creation should succeed (UDP — just creates a socket)
-    let mut session = SnmpSession::new(config).expect("UDP session creation should succeed");
+            // Session creation should succeed (UDP — just creates a socket)
+            let mut session =
+                SnmpSession::new(config).expect("UDP session creation should succeed");
 
-    // GET should fail (timeout or connection refused)
-    let oid = Oid::new(vec![1, 3, 6, 1, 2, 1, 1, 1, 0]);
-    let result = session.get(&oid);
-    assert!(result.is_err(), "GET to non-existent host should fail");
+            // GET should fail (timeout or connection refused)
+            let oid = Oid::new(vec![1, 3, 6, 1, 2, 1, 1, 1, 0]);
+            let result = session.get(&oid);
+            assert!(result.is_err(), "GET to non-existent host should fail");
+        })
+        .expect("failed to spawn test thread")
+        .join();
+
+    result.expect("test thread panicked");
 }
 
 #[test]
