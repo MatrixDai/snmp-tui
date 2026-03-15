@@ -108,7 +108,8 @@ fn to_snmp2_cipher(proto: PrivProtocol) -> snmp2::v3::Cipher {
 /// This is NOT Send/Sync — it must be used within a single thread.
 /// For async use, wrap calls with `tokio::task::spawn_blocking`.
 pub struct SnmpSession {
-    inner: snmp2::SyncSession,
+    read_session: snmp2::SyncSession,
+    write_session: Option<snmp2::SyncSession>,
     config: SnmpConfig,
 }
 
@@ -122,6 +123,10 @@ impl std::fmt::Debug for SnmpSession {
 
 impl SnmpSession {
     /// Create a new SNMP session from configuration.
+    ///
+    /// For v1/v2c, creates separate read and write sessions using
+    /// `read_community` and `write_community` respectively, so that
+    /// SET operations use the correct write community string.
     pub fn new(config: SnmpConfig) -> Result<Self, SnmpError> {
         let dest = config.destination();
         let timeout = Duration::from_millis(config.timeout_ms);
@@ -130,14 +135,40 @@ impl SnmpSession {
         // (many SNMP agents only listen on IPv4)
         let resolved = resolve_prefer_ipv4(&dest)?;
 
-        let inner = match config.version {
+        let (read_session, write_session) = match config.version {
             SnmpVersion::V1 => {
-                snmp2::SyncSession::new_v1(resolved, config.community.as_bytes(), Some(timeout), 0)
-                    .map_err(SnmpError::Io)?
+                let read = snmp2::SyncSession::new_v1(
+                    resolved,
+                    config.read_community.as_bytes(),
+                    Some(timeout),
+                    0,
+                )
+                .map_err(SnmpError::Io)?;
+                let write = snmp2::SyncSession::new_v1(
+                    resolved,
+                    config.write_community.as_bytes(),
+                    Some(timeout),
+                    0,
+                )
+                .map_err(SnmpError::Io)?;
+                (read, Some(write))
             }
             SnmpVersion::V2c => {
-                snmp2::SyncSession::new_v2c(resolved, config.community.as_bytes(), Some(timeout), 0)
-                    .map_err(SnmpError::Io)?
+                let read = snmp2::SyncSession::new_v2c(
+                    resolved,
+                    config.read_community.as_bytes(),
+                    Some(timeout),
+                    0,
+                )
+                .map_err(SnmpError::Io)?;
+                let write = snmp2::SyncSession::new_v2c(
+                    resolved,
+                    config.write_community.as_bytes(),
+                    Some(timeout),
+                    0,
+                )
+                .map_err(SnmpError::Io)?;
+                (read, Some(write))
             }
             SnmpVersion::V3 => {
                 let creds = config
@@ -153,11 +184,15 @@ impl SnmpSession {
                 // Initialize v3 session (discovers engine ID)
                 session.init().map_err(SnmpError::from)?;
 
-                session
+                (session, None)
             }
         };
 
-        Ok(Self { inner, config })
+        Ok(Self {
+            read_session,
+            write_session,
+            config,
+        })
     }
 
     /// Get the session's configuration.
@@ -171,7 +206,7 @@ impl SnmpSession {
 
         let mut last_err = None;
         for _ in 0..=self.config.retries {
-            match self.inner.get(&snmp_oid) {
+            match self.read_session.get(&snmp_oid) {
                 Ok(mut pdu) => {
                     check_pdu_error(&pdu)?;
                     if let Some((_oid, value)) = pdu.varbinds.next() {
@@ -201,7 +236,7 @@ impl SnmpSession {
 
         let mut last_err = None;
         for _ in 0..=self.config.retries {
-            match self.inner.getnext(&snmp_oid) {
+            match self.read_session.getnext(&snmp_oid) {
                 Ok(mut pdu) => {
                     check_pdu_error(&pdu)?;
                     if let Some((resp_oid, value)) = pdu.varbinds.next() {
@@ -238,7 +273,7 @@ impl SnmpSession {
 
         let mut last_err = None;
         for _ in 0..=self.config.retries {
-            match self.inner.getbulk(&[&snmp_oid], 0, max_repetitions) {
+            match self.read_session.getbulk(&[&snmp_oid], 0, max_repetitions) {
                 Ok(pdu) => {
                     check_pdu_error(&pdu)?;
                     let results: Vec<(Oid, SnmpValue)> = pdu
@@ -308,12 +343,17 @@ impl SnmpSession {
     }
 
     /// Perform a SET operation.
+    /// Uses the write session (write_community) for v1/v2c, falls back to read session for v3.
     pub fn set(&mut self, oid: &Oid, value: &SnmpValue) -> Result<(), SnmpError> {
         let snmp_oid = to_snmp2_oid(oid)?;
+        let session = self
+            .write_session
+            .as_mut()
+            .unwrap_or(&mut self.read_session);
 
         let mut last_err = None;
         for _ in 0..=self.config.retries {
-            match self.inner.set(&[(&snmp_oid, to_snmp2_value(value))]) {
+            match session.set(&[(&snmp_oid, to_snmp2_value(value))]) {
                 Ok(pdu) => {
                     check_pdu_error(&pdu)?;
                     return Ok(());

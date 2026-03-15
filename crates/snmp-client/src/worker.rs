@@ -110,10 +110,11 @@ fn worker_loop(
             SnmpRequest::Connect(config) => {
                 let dest = config.destination();
                 dbg_log!(
-                    "CONNECT to {} version={} community={} timeout={}ms retries={}",
+                    "CONNECT to {} version={} read_community={} write_community={} timeout={}ms retries={}",
                     dest,
                     config.version,
-                    config.community,
+                    config.read_community,
+                    config.write_community,
                     config.timeout_ms,
                     config.retries
                 );

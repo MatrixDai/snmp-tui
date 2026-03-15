@@ -87,7 +87,14 @@ impl ConnectionManagerModal {
             .subsec_millis()
             % 10000;
         let alias = format!("device-{}", rand_num);
-        self.edit_view = Some(ConnectModal::new(&alias, "localhost", 161, "v2c", "public"));
+        self.edit_view = Some(ConnectModal::new(
+            &alias,
+            "localhost",
+            161,
+            "v2c",
+            "public",
+            "private",
+        ));
     }
 
     /// Open the edit view for the currently selected connection.
@@ -100,26 +107,27 @@ impl ConnectionManagerModal {
                 &entry.host,
                 entry.port,
                 &entry.version,
-                &entry.community,
+                &entry.read_community,
+                &entry.write_community,
             ));
             // Fill v3 fields if applicable
             if let Some(ref mut modal) = self.edit_view
                 && entry.version == "v3"
             {
                 if let Some(ref u) = entry.username {
-                    modal.fields[5].value = u.clone();
+                    modal.fields[6].value = u.clone();
                 }
                 if let Some(ref p) = entry.auth_protocol {
-                    modal.fields[6].value = p.clone();
-                }
-                if let Some(ref p) = entry.auth_password {
                     modal.fields[7].value = p.clone();
                 }
-                if let Some(ref p) = entry.priv_protocol {
+                if let Some(ref p) = entry.auth_password {
                     modal.fields[8].value = p.clone();
                 }
-                if let Some(ref p) = entry.priv_password {
+                if let Some(ref p) = entry.priv_protocol {
                     modal.fields[9].value = p.clone();
+                }
+                if let Some(ref p) = entry.priv_password {
+                    modal.fields[10].value = p.clone();
                 }
             }
         }
@@ -166,7 +174,14 @@ pub enum FieldKind {
 }
 
 impl ConnectModal {
-    pub fn new(alias: &str, host: &str, port: u16, version: &str, community: &str) -> Self {
+    pub fn new(
+        alias: &str,
+        host: &str,
+        port: u16,
+        version: &str,
+        read_community: &str,
+        write_community: &str,
+    ) -> Self {
         Self {
             fields: vec![
                 // 0: Alias
@@ -201,14 +216,21 @@ impl ConnectModal {
                     ]),
                     editable: true,
                 },
-                // 4: Community
+                // 4: Read Community
                 FormField {
-                    label: "Community",
-                    value: community.to_string(),
+                    label: "Read Community",
+                    value: read_community.to_string(),
                     kind: FieldKind::Text,
                     editable: true,
                 },
-                // v3 fields (indices 5-9)
+                // 5: Write Community
+                FormField {
+                    label: "Write Community",
+                    value: write_community.to_string(),
+                    kind: FieldKind::Text,
+                    editable: true,
+                },
+                // v3 fields (indices 6-10)
                 FormField {
                     label: "Username",
                     value: String::new(),
@@ -267,10 +289,10 @@ impl ConnectModal {
         let mut indices = vec![0, 1, 2, 3]; // Alias, Host, Port, Version
         if self.is_v3() {
             // v3: show Username, Auth Protocol, Auth Password, Priv Protocol, Priv Password
-            indices.extend([5, 6, 7, 8, 9]);
+            indices.extend([6, 7, 8, 9, 10]);
         } else {
-            // v1/v2c: show Community
-            indices.push(4);
+            // v1/v2c: show Read Community, Write Community
+            indices.extend([4, 5]);
         }
         indices
     }
@@ -373,20 +395,21 @@ impl ConnectModal {
 
         let port: u16 = self.fields[2].value.trim().parse().unwrap_or(161);
         let version = self.fields[3].value.clone();
-        let community = self.fields[4].value.clone();
+        let read_community = self.fields[4].value.clone();
+        let write_community = self.fields[5].value.clone();
 
         let (username, auth_protocol, auth_password, priv_protocol, priv_password) =
             if version == "v3" {
-                let u = Some(self.fields[5].value.clone()).filter(|s| !s.is_empty());
-                let ap = Some(self.fields[6].value.clone()).filter(|s| s != "None");
+                let u = Some(self.fields[6].value.clone()).filter(|s| !s.is_empty());
+                let ap = Some(self.fields[7].value.clone()).filter(|s| s != "None");
                 let apw = if ap.is_some() {
-                    Some(self.fields[7].value.clone())
+                    Some(self.fields[8].value.clone())
                 } else {
                     None
                 };
-                let pp = Some(self.fields[8].value.clone()).filter(|s| s != "None");
+                let pp = Some(self.fields[9].value.clone()).filter(|s| s != "None");
                 let ppw = if pp.is_some() {
-                    Some(self.fields[9].value.clone())
+                    Some(self.fields[10].value.clone())
                 } else {
                     None
                 };
@@ -400,7 +423,8 @@ impl ConnectModal {
             host,
             port,
             version,
-            community,
+            read_community,
+            write_community,
             username,
             auth_protocol,
             auth_password,
@@ -466,7 +490,9 @@ impl SetModal {
             }
             Some(Syntax::Constrained { base, .. }) => Self::hint_for_syntax(Some(base)),
             Some(Syntax::TextualConvention(name)) => {
-                if name.contains("String") || name == "DisplayString" {
+                if name == "Boolean" || name == "TruthValue" {
+                    "Enter 0 (false) or 1 (true)".to_string()
+                } else if name.contains("String") || name == "DisplayString" {
                     "Enter string value".to_string()
                 } else {
                     format!("Enter {} value", name)
@@ -526,6 +552,13 @@ impl SetModal {
                 let components: Vec<u32> =
                     input.split('.').filter_map(|p| p.parse().ok()).collect();
                 SnmpValue::ObjectIdentifier(mib_parser::Oid::new(components))
+            }
+            Some(Syntax::TextualConvention(name)) if name == "Boolean" || name == "TruthValue" => {
+                match input.to_lowercase().as_str() {
+                    "true" | "1" => SnmpValue::Integer(1),
+                    "false" | "0" => SnmpValue::Integer(0),
+                    _ => SnmpValue::Integer(input.parse().unwrap_or(0)),
+                }
             }
             _ => {
                 // Default: try integer, then string

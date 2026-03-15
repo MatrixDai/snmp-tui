@@ -14,7 +14,8 @@ fn config_default_values() {
     assert_eq!(config.host, "127.0.0.1");
     assert_eq!(config.port, 161);
     assert_eq!(config.version, SnmpVersion::V2c);
-    assert_eq!(config.community, "public");
+    assert_eq!(config.read_community, "public");
+    assert_eq!(config.write_community, "private");
     assert_eq!(config.timeout_ms, 5000);
     assert_eq!(config.retries, 1);
     assert!(config.v3_credentials.is_none());
