@@ -18,6 +18,8 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy -- -D warnings
       - run: cargo test
+        env:
+          RUST_MIN_STACK: 8388608  # 8MB — snmp2 crate needs deep stack
 
   build:
     name: Build (${{ matrix.target }})
