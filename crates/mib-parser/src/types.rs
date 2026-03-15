@@ -56,6 +56,7 @@ pub struct MibObject {
     pub name: String,
     pub oid: Oid,
     pub module: String,
+    pub source_file: String,
     pub syntax: Option<Syntax>,
     pub access: Option<Access>,
     pub status: Option<Status>,

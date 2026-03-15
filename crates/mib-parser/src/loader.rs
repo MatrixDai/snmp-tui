@@ -40,7 +40,12 @@ fn load_mibs_tolerant(paths: &[PathBuf]) -> (Vec<RawParsedModule>, Vec<String>) 
             }
         };
         match parse_mib_raw(&source) {
-            Ok(modules) => all_modules.extend(modules),
+            Ok(mut modules) => {
+                for m in &mut modules {
+                    m.source_file = path.display().to_string();
+                }
+                all_modules.extend(modules);
+            }
             Err(e) => {
                 warnings.push(format!("Skipping {} (parse error): {}", path.display(), e));
             }
@@ -97,6 +102,7 @@ fn build_tree_from_modules(all_modules: &[RawParsedModule]) -> Result<OidTree, P
                 let idx = tree.insert(oid, &obj.name);
                 let mut resolved_obj = obj.clone();
                 resolved_obj.oid = oid.clone();
+                resolved_obj.source_file = module.source_file.clone();
                 if let Some(node) = tree.get_mut(idx) {
                     node.mib_object = Some(resolved_obj);
                 }
