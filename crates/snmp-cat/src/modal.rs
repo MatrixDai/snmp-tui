@@ -24,6 +24,8 @@ pub struct ConnectionManagerModal {
     pub edit_view: Option<ConnectModal>,
     /// Index into `connections` being edited, or None for a new connection.
     pub editing_index: Option<usize>,
+    /// Original alias of the connection being edited (for in-place update).
+    pub editing_original_alias: Option<String>,
     /// Whether this was opened at startup (Esc = quit) vs mid-session (Esc = close modal).
     pub is_startup: bool,
 }
@@ -49,6 +51,7 @@ impl ConnectionManagerModal {
             viewport_height: 0,
             edit_view: None,
             editing_index: None,
+            editing_original_alias: None,
             is_startup,
         }
     }
@@ -76,19 +79,22 @@ impl ConnectionManagerModal {
     /// Open the edit view for a new connection with default values.
     pub fn open_new(&mut self) {
         self.editing_index = None;
-        self.edit_view = Some(ConnectModal::new(
-            "",
-            "New Connection",
-            161,
-            "v2c",
-            "public",
-        ));
+        self.editing_original_alias = None;
+        // Generate a random alias like "device-1234"
+        let rand_num = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_millis()
+            % 10000;
+        let alias = format!("device-{}", rand_num);
+        self.edit_view = Some(ConnectModal::new(&alias, "localhost", 161, "v2c", "public"));
     }
 
     /// Open the edit view for the currently selected connection.
     pub fn open_edit(&mut self) {
         if let Some(entry) = self.connections.get(self.selected) {
             self.editing_index = Some(self.selected);
+            self.editing_original_alias = Some(entry.alias.clone());
             self.edit_view = Some(ConnectModal::new(
                 &entry.alias,
                 &entry.host,
@@ -282,6 +288,35 @@ impl ConnectModal {
         if let Some(pos) = visible.iter().position(|&i| i == self.focused_field) {
             let prev = if pos == 0 { visible.len() - 1 } else { pos - 1 };
             self.focused_field = visible[prev];
+        }
+    }
+
+    /// Down arrow: cycle forward on Cycle fields, or move to next field on Text fields.
+    pub fn arrow_down(&mut self) {
+        if matches!(self.fields[self.focused_field].kind, FieldKind::Cycle(_)) {
+            self.cycle_field();
+        } else {
+            self.focus_next();
+        }
+    }
+
+    /// Up arrow: cycle backward on Cycle fields, or move to prev field on Text fields.
+    pub fn arrow_up(&mut self) {
+        if let FieldKind::Cycle(ref options) = self.fields[self.focused_field].kind {
+            if let Some(pos) = options
+                .iter()
+                .position(|o| o == &self.fields[self.focused_field].value)
+            {
+                let prev = if pos == 0 { options.len() - 1 } else { pos - 1 };
+                self.fields[self.focused_field].value = options[prev].clone();
+            }
+            // If version changed, ensure focused_field is still visible
+            let visible = self.visible_fields();
+            if !visible.contains(&self.focused_field) {
+                self.focused_field = visible[0];
+            }
+        } else {
+            self.focus_prev();
         }
     }
 

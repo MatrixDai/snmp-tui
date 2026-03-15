@@ -3,7 +3,6 @@ use std::time::Duration;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{App, FocusedPanel, Message};
-use crate::modal::Modal;
 
 /// Poll for crossterm events and convert to application Messages.
 /// Returns None if no event is available within the timeout.
@@ -78,22 +77,10 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
     }
 }
 
-fn handle_modal_key(key: KeyEvent, app: &App) -> Option<Message> {
+fn handle_modal_key(key: KeyEvent, _app: &App) -> Option<Message> {
     match key.code {
         KeyCode::Esc => Some(Message::ModalClose),
-        KeyCode::Enter => {
-            // In connection manager's edit view, if focused on a cycle field, cycle it
-            if let Some(Modal::ConnectionManager(mgr)) = &app.modal
-                && let Some(ref edit) = mgr.edit_view
-                && matches!(
-                    edit.fields[edit.focused_field].kind,
-                    crate::modal::FieldKind::Cycle(_)
-                )
-            {
-                return Some(Message::ModalCycle);
-            }
-            Some(Message::ModalConfirm)
-        }
+        KeyCode::Enter => Some(Message::ModalConfirm),
         KeyCode::Tab => {
             if key.modifiers.contains(KeyModifiers::SHIFT) {
                 Some(Message::ModalTabPrev)

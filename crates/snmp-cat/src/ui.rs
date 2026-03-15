@@ -789,7 +789,7 @@ fn draw_connection_manager_modal(
             };
 
             let cycle_hint = if matches!(field.kind, crate::modal::FieldKind::Cycle(_)) {
-                " [Enter to cycle]"
+                " [Up/Down to cycle]"
             } else {
                 ""
             };
@@ -811,7 +811,7 @@ fn draw_connection_manager_modal(
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "  [Tab] Next field  [Enter] Cycle/Connect  [Esc] Back",
+            "  [Tab] Next field  [Up/Down] Navigate/Cycle  [Enter] Save  [Esc] Back",
             dim_style,
         )));
 

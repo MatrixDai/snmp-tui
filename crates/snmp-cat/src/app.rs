@@ -93,7 +93,6 @@ pub enum Message {
     ModalTabPrev,
     ModalChar(char),
     ModalBackspace,
-    ModalCycle,
     ModalDown,
     ModalUp,
 
@@ -907,34 +906,59 @@ impl App {
 
     /// Handle connection manager confirm — connect to selected or save from edit view.
     fn confirm_connection_manager(&mut self) {
-        let (entry, snmp_config) = {
-            let mgr = match &self.modal {
-                Some(Modal::ConnectionManager(m)) => m,
-                _ => return,
-            };
-
-            if let Some(ref edit_view) = mgr.edit_view {
-                // Edit view: build connection entry and SnmpConfig
-                let entry = match edit_view.build_connection_entry() {
-                    Some(e) => e,
-                    None => return,
-                };
-                let snmp_config = entry.to_snmp_config(self.timeout_ms, self.retries);
-                (entry, snmp_config)
-            } else {
-                // List view: connect to selected
-                let entry = match mgr.selected_entry() {
-                    Some(e) => e.clone(),
-                    None => return,
-                };
-                let snmp_config = entry.to_snmp_config(self.timeout_ms, self.retries);
-                (entry, snmp_config)
-            }
+        let mgr = match &mut self.modal {
+            Some(Modal::ConnectionManager(m)) => m,
+            _ => return,
         };
 
-        self.pending_connection_entry = Some(entry);
-        self.connect(snmp_config);
-        self.modal = None;
+        if mgr.edit_view.is_some() {
+            // Edit view: save connection and go back to list
+            let edit_view = mgr.edit_view.as_ref().unwrap();
+            let entry = match edit_view.build_connection_entry() {
+                Some(e) => e,
+                None => return,
+            };
+
+            // If editing an existing connection, delete old alias first (handles renames)
+            if let Some(ref original_alias) = mgr.editing_original_alias
+                && original_alias != &entry.alias
+            {
+                config::delete_connection(original_alias);
+                // Update local list: remove old
+                mgr.connections.retain(|c| c.alias != *original_alias);
+            }
+
+            // Save to config
+            config::save_connection(&entry);
+
+            // Update local connections list
+            if let Some(existing) = mgr.connections.iter_mut().find(|c| c.alias == entry.alias) {
+                *existing = entry;
+            } else {
+                mgr.connections.push(entry);
+            }
+
+            // Close edit view, go back to list
+            mgr.edit_view = None;
+            mgr.editing_index = None;
+            mgr.editing_original_alias = None;
+
+            // Also sync connections back to app
+            self.connections = match &self.modal {
+                Some(Modal::ConnectionManager(m)) => m.connections.clone(),
+                _ => self.connections.clone(),
+            };
+        } else {
+            // List view: connect to selected
+            let entry = match mgr.selected_entry() {
+                Some(e) => e.clone(),
+                None => return,
+            };
+            let snmp_config = entry.to_snmp_config(self.timeout_ms, self.retries);
+            self.pending_connection_entry = Some(entry);
+            self.connect(snmp_config);
+            self.modal = None;
+        }
     }
 
     /// Process a message and update application state.
@@ -1087,17 +1111,12 @@ impl App {
                     }
                     None => {}
                 },
-                Message::ModalCycle => {
-                    if let Some(Modal::ConnectionManager(mgr)) = &mut self.modal
-                        && let Some(ref mut edit) = mgr.edit_view
-                    {
-                        edit.cycle_field();
-                    }
-                }
                 Message::ModalDown => match &mut self.modal {
                     Some(Modal::Search(m)) => m.select_next(),
                     Some(Modal::ConnectionManager(mgr)) => {
-                        if mgr.edit_view.is_none() {
+                        if let Some(ref mut edit) = mgr.edit_view {
+                            edit.arrow_down();
+                        } else {
                             mgr.scroll_down();
                         }
                     }
@@ -1113,7 +1132,9 @@ impl App {
                 Message::ModalUp => match &mut self.modal {
                     Some(Modal::Search(m)) => m.select_prev(),
                     Some(Modal::ConnectionManager(mgr)) => {
-                        if mgr.edit_view.is_none() {
+                        if let Some(ref mut edit) = mgr.edit_view {
+                            edit.arrow_up();
+                        } else {
                             mgr.scroll_up();
                         }
                     }
