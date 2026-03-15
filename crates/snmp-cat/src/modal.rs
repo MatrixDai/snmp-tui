@@ -1,16 +1,144 @@
 use mib_parser::{NodeIndex, OidTree, Syntax};
-use snmp_client::{AuthProtocol, PrivProtocol, SnmpConfig, SnmpValue, SnmpVersion, V3Credentials};
+use snmp_client::SnmpValue;
+
+use crate::config::ConnectionEntry;
 
 /// Active modal dialog.
 pub enum Modal {
-    Connect(ConnectModal),
+    ConnectionManager(ConnectionManagerModal),
     Set(SetModal),
     Search(SearchModal),
     MibInfo(MibInfoModal),
 }
 
 // ============================================================
-// Connect Modal
+// Connection Manager Modal
+// ============================================================
+
+pub struct ConnectionManagerModal {
+    pub connections: Vec<ConnectionEntry>,
+    pub selected: usize,
+    pub scroll_offset: usize,
+    pub viewport_height: usize,
+    /// Sub-view: editing/creating a connection (reuses ConnectModal with alias).
+    pub edit_view: Option<ConnectModal>,
+    /// Index into `connections` being edited, or None for a new connection.
+    pub editing_index: Option<usize>,
+    /// Whether this was opened at startup (Esc = quit) vs mid-session (Esc = close modal).
+    pub is_startup: bool,
+}
+
+impl ConnectionManagerModal {
+    pub fn new(
+        connections: Vec<ConnectionEntry>,
+        last_connection: Option<String>,
+        is_startup: bool,
+    ) -> Self {
+        let selected = if let Some(ref alias) = last_connection {
+            connections
+                .iter()
+                .position(|c| &c.alias == alias)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        Self {
+            connections,
+            selected,
+            scroll_offset: 0,
+            viewport_height: 0,
+            edit_view: None,
+            editing_index: None,
+            is_startup,
+        }
+    }
+
+    pub fn scroll_up(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+            if self.selected < self.scroll_offset {
+                self.scroll_offset = self.selected;
+            }
+        }
+    }
+
+    pub fn scroll_down(&mut self) {
+        if !self.connections.is_empty() && self.selected + 1 < self.connections.len() {
+            self.selected += 1;
+            if self.viewport_height > 0
+                && self.selected >= self.scroll_offset + self.viewport_height
+            {
+                self.scroll_offset = self.selected - self.viewport_height + 1;
+            }
+        }
+    }
+
+    /// Open the edit view for a new connection with default values.
+    pub fn open_new(&mut self) {
+        self.editing_index = None;
+        self.edit_view = Some(ConnectModal::new(
+            "",
+            "New Connection",
+            161,
+            "v2c",
+            "public",
+        ));
+    }
+
+    /// Open the edit view for the currently selected connection.
+    pub fn open_edit(&mut self) {
+        if let Some(entry) = self.connections.get(self.selected) {
+            self.editing_index = Some(self.selected);
+            self.edit_view = Some(ConnectModal::new(
+                &entry.alias,
+                &entry.host,
+                entry.port,
+                &entry.version,
+                &entry.community,
+            ));
+            // Fill v3 fields if applicable
+            if let Some(ref mut modal) = self.edit_view
+                && entry.version == "v3"
+            {
+                if let Some(ref u) = entry.username {
+                    modal.fields[5].value = u.clone();
+                }
+                if let Some(ref p) = entry.auth_protocol {
+                    modal.fields[6].value = p.clone();
+                }
+                if let Some(ref p) = entry.auth_password {
+                    modal.fields[7].value = p.clone();
+                }
+                if let Some(ref p) = entry.priv_protocol {
+                    modal.fields[8].value = p.clone();
+                }
+                if let Some(ref p) = entry.priv_password {
+                    modal.fields[9].value = p.clone();
+                }
+            }
+        }
+    }
+
+    /// Delete the currently selected connection.
+    pub fn delete_selected(&mut self) {
+        if !self.connections.is_empty() {
+            let alias = self.connections[self.selected].alias.clone();
+            self.connections.remove(self.selected);
+            crate::config::delete_connection(&alias);
+            if self.selected >= self.connections.len() && self.selected > 0 {
+                self.selected -= 1;
+            }
+        }
+    }
+
+    /// Get the currently selected connection entry, if any.
+    pub fn selected_entry(&self) -> Option<&ConnectionEntry> {
+        self.connections.get(self.selected)
+    }
+}
+
+// ============================================================
+// Connect Modal (with Alias field)
 // ============================================================
 
 pub struct ConnectModal {
@@ -32,21 +160,31 @@ pub enum FieldKind {
 }
 
 impl ConnectModal {
-    pub fn new(host: &str, port: u16, version: &str, community: &str) -> Self {
+    pub fn new(alias: &str, host: &str, port: u16, version: &str, community: &str) -> Self {
         Self {
             fields: vec![
+                // 0: Alias
+                FormField {
+                    label: "Alias",
+                    value: alias.to_string(),
+                    kind: FieldKind::Text,
+                    editable: true,
+                },
+                // 1: Host
                 FormField {
                     label: "Host",
                     value: host.to_string(),
                     kind: FieldKind::Text,
                     editable: true,
                 },
+                // 2: Port
                 FormField {
                     label: "Port",
                     value: port.to_string(),
                     kind: FieldKind::Text,
                     editable: true,
                 },
+                // 3: Version
                 FormField {
                     label: "Version",
                     value: version.to_string(),
@@ -57,13 +195,14 @@ impl ConnectModal {
                     ]),
                     editable: true,
                 },
+                // 4: Community
                 FormField {
                     label: "Community",
                     value: community.to_string(),
                     kind: FieldKind::Text,
                     editable: true,
                 },
-                // v3 fields (indices 4-8)
+                // v3 fields (indices 5-9)
                 FormField {
                     label: "Username",
                     value: String::new(),
@@ -114,18 +253,18 @@ impl ConnectModal {
     }
 
     pub fn is_v3(&self) -> bool {
-        self.fields[2].value == "v3"
+        self.fields[3].value == "v3"
     }
 
     /// Return the visible field indices based on version selection.
     pub fn visible_fields(&self) -> Vec<usize> {
-        let mut indices = vec![0, 1, 2]; // Host, Port, Version
+        let mut indices = vec![0, 1, 2, 3]; // Alias, Host, Port, Version
         if self.is_v3() {
             // v3: show Username, Auth Protocol, Auth Password, Priv Protocol, Priv Password
-            indices.extend([4, 5, 6, 7, 8]);
+            indices.extend([5, 6, 7, 8, 9]);
         } else {
             // v1/v2c: show Community
-            indices.push(3);
+            indices.push(4);
         }
         indices
     }
@@ -183,67 +322,55 @@ impl ConnectModal {
         }
     }
 
-    /// Build an SnmpConfig from the form fields.
-    pub fn build_config(&self) -> Option<SnmpConfig> {
-        let host = self.fields[0].value.trim().to_string();
+    /// Build a `ConnectionEntry` from the form fields.
+    pub fn build_connection_entry(&self) -> Option<ConnectionEntry> {
+        let host = self.fields[1].value.trim().to_string();
         if host.is_empty() {
             return None;
         }
-        let port: u16 = self.fields[1].value.trim().parse().unwrap_or(161);
-        let version = match self.fields[2].value.as_str() {
-            "v1" => SnmpVersion::V1,
-            "v3" => SnmpVersion::V3,
-            _ => SnmpVersion::V2c,
-        };
-        let community = self.fields[3].value.clone();
-
-        let v3_credentials = if version == SnmpVersion::V3 {
-            let username = self.fields[4].value.clone();
-            let auth_protocol = match self.fields[5].value.as_str() {
-                "MD5" => Some(AuthProtocol::Md5),
-                "SHA" => Some(AuthProtocol::Sha1),
-                "SHA-224" => Some(AuthProtocol::Sha224),
-                "SHA-256" => Some(AuthProtocol::Sha256),
-                "SHA-384" => Some(AuthProtocol::Sha384),
-                "SHA-512" => Some(AuthProtocol::Sha512),
-                _ => None,
-            };
-            let auth_password = if auth_protocol.is_some() {
-                Some(self.fields[6].value.clone())
-            } else {
-                None
-            };
-            let priv_protocol = match self.fields[7].value.as_str() {
-                "DES" => Some(PrivProtocol::Des),
-                "AES-128" => Some(PrivProtocol::Aes128),
-                "AES-192" => Some(PrivProtocol::Aes192),
-                "AES-256" => Some(PrivProtocol::Aes256),
-                _ => None,
-            };
-            let priv_password = if priv_protocol.is_some() {
-                Some(self.fields[8].value.clone())
-            } else {
-                None
-            };
-            Some(V3Credentials {
-                username,
-                auth_protocol,
-                auth_password,
-                priv_protocol,
-                priv_password,
-            })
+        let alias = self.fields[0].value.trim().to_string();
+        // Auto-generate alias if empty
+        let alias = if alias.is_empty() {
+            format!("{}:{}", host, self.fields[2].value.trim())
         } else {
-            None
+            alias
         };
 
-        Some(SnmpConfig {
+        let port: u16 = self.fields[2].value.trim().parse().unwrap_or(161);
+        let version = self.fields[3].value.clone();
+        let community = self.fields[4].value.clone();
+
+        let (username, auth_protocol, auth_password, priv_protocol, priv_password) =
+            if version == "v3" {
+                let u = Some(self.fields[5].value.clone()).filter(|s| !s.is_empty());
+                let ap = Some(self.fields[6].value.clone()).filter(|s| s != "None");
+                let apw = if ap.is_some() {
+                    Some(self.fields[7].value.clone())
+                } else {
+                    None
+                };
+                let pp = Some(self.fields[8].value.clone()).filter(|s| s != "None");
+                let ppw = if pp.is_some() {
+                    Some(self.fields[9].value.clone())
+                } else {
+                    None
+                };
+                (u, ap, apw, pp, ppw)
+            } else {
+                (None, None, None, None, None)
+            };
+
+        Some(ConnectionEntry {
+            alias,
             host,
             port,
             version,
             community,
-            timeout_ms: 5000,
-            retries: 1,
-            v3_credentials,
+            username,
+            auth_protocol,
+            auth_password,
+            priv_protocol,
+            priv_password,
         })
     }
 }

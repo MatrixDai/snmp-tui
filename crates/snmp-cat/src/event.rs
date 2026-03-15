@@ -56,7 +56,7 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
     // Global keys (always active)
     match key.code {
         KeyCode::Char('q') => return Some(Message::Quit),
-        KeyCode::Char('o') => return Some(Message::OpenConnectModal),
+        KeyCode::Char('o') => return Some(Message::OpenConnectionManager),
         KeyCode::Char('m') => return Some(Message::OpenMibInfoModal),
         KeyCode::Char('c') => return Some(Message::ClearResults),
         KeyCode::Tab => {
@@ -82,10 +82,11 @@ fn handle_modal_key(key: KeyEvent, app: &App) -> Option<Message> {
     match key.code {
         KeyCode::Esc => Some(Message::ModalClose),
         KeyCode::Enter => {
-            // In connect modal, if focused on a cycle field, cycle it instead of confirming
-            if let Some(Modal::Connect(m)) = &app.modal
+            // In connection manager's edit view, if focused on a cycle field, cycle it
+            if let Some(Modal::ConnectionManager(mgr)) = &app.modal
+                && let Some(ref edit) = mgr.edit_view
                 && matches!(
-                    m.fields[m.focused_field].kind,
+                    edit.fields[edit.focused_field].kind,
                     crate::modal::FieldKind::Cycle(_)
                 )
             {

@@ -50,6 +50,9 @@ fn draw_title_bar(frame: &mut Frame, area: Rect, app: &App) {
         ConnectionState::Connecting => {
             Span::styled("[Connecting...]", Style::default().fg(Color::Yellow))
         }
+        ConnectionState::Validating { .. } => {
+            Span::styled("[Validating...]", Style::default().fg(Color::Yellow))
+        }
         ConnectionState::Connected { host, version } => Span::styled(
             format!("[{} {}]", host, version),
             Style::default().fg(Color::Green),
@@ -736,7 +739,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 
 fn draw_modal(frame: &mut Frame, app: &mut App) {
     match &mut app.modal {
-        Some(Modal::Connect(m)) => draw_connect_modal(frame, m),
+        Some(Modal::ConnectionManager(m)) => draw_connection_manager_modal(frame, m),
         Some(Modal::Set(m)) => draw_set_modal(frame, m),
         Some(Modal::Search(m)) => draw_search_modal(frame, m),
         Some(Modal::MibInfo(m)) => draw_mib_info_modal(frame, m),
@@ -744,65 +747,176 @@ fn draw_modal(frame: &mut Frame, app: &mut App) {
     }
 }
 
-fn draw_connect_modal(frame: &mut Frame, modal: &crate::modal::ConnectModal) {
-    let area = centered_rect(50, 60, frame.area());
+fn draw_connection_manager_modal(
+    frame: &mut Frame,
+    modal: &mut crate::modal::ConnectionManagerModal,
+) {
+    // If edit view is active, render the connect form instead
+    if let Some(ref edit) = modal.edit_view {
+        let area = centered_rect(50, 60, frame.area());
+        frame.render_widget(Clear, area);
+
+        let title = if modal.editing_index.is_some() {
+            " Edit Connection "
+        } else {
+            " New Connection "
+        };
+        let block = Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        let label_style = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
+        let value_style = Style::default().fg(Color::White);
+        let focused_style = Style::default().fg(Color::Yellow).bg(Color::DarkGray);
+        let dim_style = Style::default().fg(Color::Gray);
+
+        let visible = edit.visible_fields();
+        let mut lines: Vec<Line> = Vec::new();
+
+        for &field_idx in &visible {
+            let field = &edit.fields[field_idx];
+            let is_focused = field_idx == edit.focused_field;
+
+            let value_display = if is_focused {
+                format!("{}_", field.value)
+            } else {
+                field.value.clone()
+            };
+
+            let cycle_hint = if matches!(field.kind, crate::modal::FieldKind::Cycle(_)) {
+                " [Enter to cycle]"
+            } else {
+                ""
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {:15}", field.label), label_style),
+                Span::styled(
+                    value_display,
+                    if is_focused {
+                        focused_style
+                    } else {
+                        value_style
+                    },
+                ),
+                Span::styled(cycle_hint, dim_style),
+            ]));
+            lines.push(Line::from(""));
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  [Tab] Next field  [Enter] Cycle/Connect  [Esc] Back",
+            dim_style,
+        )));
+
+        frame.render_widget(Paragraph::new(lines), inner);
+        return;
+    }
+
+    // List view
+    let area = centered_rect(55, 60, frame.area());
     frame.render_widget(Clear, area);
 
     let block = Block::default()
-        .title(" Connect to Device ")
+        .title(" Connection Manager ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let label_style = Style::default()
+    let heading_style = Style::default()
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
-    let value_style = Style::default().fg(Color::White);
-    let focused_style = Style::default().fg(Color::Yellow).bg(Color::DarkGray);
+    let name_style = Style::default().fg(Color::White);
+    let host_style = Style::default().fg(Color::Gray);
+    let version_style = Style::default().fg(Color::Yellow);
     let dim_style = Style::default().fg(Color::Gray);
+    let selected_style = Style::default().fg(Color::Black).bg(Color::Cyan);
 
-    let visible = modal.visible_fields();
+    let content_height = inner.height as usize;
+    let footer_lines = 2;
+    let header_lines = 2;
+    let list_height = content_height.saturating_sub(header_lines + footer_lines);
+    modal.viewport_height = list_height;
+
     let mut lines: Vec<Line> = Vec::new();
 
-    for &field_idx in &visible {
-        let field = &modal.fields[field_idx];
-        let is_focused = field_idx == modal.focused_field;
+    if modal.connections.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  No saved connections",
+            heading_style,
+        )));
+        lines.push(Line::from(""));
+    } else {
+        lines.push(Line::from(Span::styled(
+            format!("  {} saved connections", modal.connections.len()),
+            heading_style,
+        )));
+        lines.push(Line::from(""));
 
-        let value_display = if is_focused {
-            format!("{}_", field.value)
-        } else {
-            field.value.clone()
-        };
+        let col_width = (inner.width as usize).saturating_sub(4);
 
-        let cycle_hint = if matches!(field.kind, crate::modal::FieldKind::Cycle(_)) {
-            " [Enter to cycle]"
-        } else {
-            ""
-        };
+        for (i, entry) in modal
+            .connections
+            .iter()
+            .enumerate()
+            .skip(modal.scroll_offset)
+            .take(list_height)
+        {
+            let is_selected = i == modal.selected;
+            let prefix = if is_selected { "▸ " } else { "  " };
+            let host_port = format!("{}:{}", entry.host, entry.port);
+            let used =
+                prefix.len() + entry.alias.len() + 2 + host_port.len() + 2 + entry.version.len();
+            let padding = col_width.saturating_sub(used);
 
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {:15}", field.label), label_style),
-            Span::styled(
-                value_display,
-                if is_focused {
-                    focused_style
-                } else {
-                    value_style
-                },
-            ),
-            Span::styled(cycle_hint, dim_style),
-        ]));
+            if is_selected {
+                let text = format!(
+                    "{}{}{}{}  {}",
+                    prefix,
+                    entry.alias,
+                    " ".repeat(padding + 2),
+                    host_port,
+                    entry.version,
+                );
+                lines.push(Line::from(Span::styled(text, selected_style)));
+            } else {
+                lines.push(Line::from(vec![
+                    Span::styled(prefix.to_string(), name_style),
+                    Span::styled(entry.alias.clone(), name_style),
+                    Span::styled(" ".repeat(padding + 2), name_style),
+                    Span::styled(host_port, host_style),
+                    Span::styled(format!("  {}", entry.version), version_style),
+                ]));
+            }
+        }
+    }
+
+    // Fill remaining
+    let used = lines.len();
+    let target = content_height.saturating_sub(footer_lines);
+    for _ in used..target {
         lines.push(Line::from(""));
     }
 
-    // Add hint at bottom
-    lines.push(Line::from(""));
+    // Footer hints
+    let esc_hint = if modal.is_startup { "Quit" } else { "Close" };
     lines.push(Line::from(Span::styled(
-        "  [Tab] Next field  [Enter] Cycle/Confirm  [Esc] Cancel",
+        format!(
+            "  [j/k] Navigate  [Enter] Connect  [n] New  [e] Edit  [d] Delete  [Esc] {}",
+            esc_hint
+        ),
         dim_style,
     )));
+    lines.push(Line::from(""));
 
+    lines.truncate(content_height);
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -1158,7 +1272,7 @@ fn draw_help_overlay(frame: &mut Frame) {
             key_style,
             desc_style,
         ),
-        help_line("    o", "Open connect dialog", key_style, desc_style),
+        help_line("    o", "Connection manager", key_style, desc_style),
         help_line("    m", "Loaded MIB modules", key_style, desc_style),
         help_line("    c", "Clear results", key_style, desc_style),
         help_line("    /", "Search MIB objects", key_style, desc_style),
