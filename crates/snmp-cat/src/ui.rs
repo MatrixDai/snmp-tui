@@ -936,7 +936,12 @@ fn draw_search_modal(frame: &mut Frame, modal: &crate::modal::SearchModal) {
 }
 
 fn draw_mib_info_modal(frame: &mut Frame, modal: &mut crate::modal::MibInfoModal) {
-    let area = centered_rect(50, 70, frame.area());
+    if let Some(ref mut ov) = modal.object_view {
+        draw_object_list_view(frame, ov);
+        return;
+    }
+
+    let area = centered_rect(60, 70, frame.area());
     frame.render_widget(Clear, area);
 
     let block = Block::default()
@@ -951,12 +956,14 @@ fn draw_mib_info_modal(frame: &mut Frame, modal: &mut crate::modal::MibInfoModal
         .add_modifier(Modifier::BOLD);
     let name_style = Style::default().fg(Color::White);
     let count_style = Style::default().fg(Color::Yellow);
+    let file_style = Style::default().fg(Color::Gray);
     let dim_style = Style::default().fg(Color::Gray);
+    let selected_style = Style::default().fg(Color::Black).bg(Color::Cyan);
 
-    // Reserve 3 lines: header, blank, and hint at bottom
     let content_height = inner.height as usize;
-    let header_lines = 2; // summary + blank line
-    let footer_lines = 2; // blank line + hint
+    let header_lines = 2;
+    let search_lines = if modal.search_active { 1 } else { 0 };
+    let footer_lines = 1 + search_lines;
     let list_height = content_height.saturating_sub(header_lines + footer_lines);
     modal.viewport_height = list_height;
 
@@ -964,7 +971,7 @@ fn draw_mib_info_modal(frame: &mut Frame, modal: &mut crate::modal::MibInfoModal
         Line::from(Span::styled(
             format!(
                 "  {} modules, {} objects total",
-                modal.modules.len(),
+                modal.filtered.len(),
                 modal.total_objects
             ),
             heading_style,
@@ -972,23 +979,51 @@ fn draw_mib_info_modal(frame: &mut Frame, modal: &mut crate::modal::MibInfoModal
         Line::from(""),
     ];
 
-    let col_width = (inner.width as usize).saturating_sub(6); // padding
+    let col_width = (inner.width as usize).saturating_sub(4);
 
-    let visible_modules: Vec<&(String, usize)> = modal
-        .modules
+    let visible: Vec<(usize, usize)> = modal
+        .filtered
         .iter()
+        .enumerate()
         .skip(modal.scroll_offset)
         .take(list_height)
+        .map(|(vis_idx, &mod_idx)| (vis_idx, mod_idx))
         .collect();
 
-    for (name, count) in &visible_modules {
-        let padding = col_width.saturating_sub(name.len() + format!("{}", count).len());
-        lines.push(Line::from(vec![
-            Span::styled("  ", name_style),
-            Span::styled((*name).clone(), name_style),
-            Span::styled(" ".repeat(padding), name_style),
-            Span::styled(format!("{}", count), count_style),
-        ]));
+    for (vis_idx, mod_idx) in &visible {
+        let (ref name, count, ref file) = modal.modules[*mod_idx];
+        let is_selected = *vis_idx == modal.selected;
+
+        // Extract just the filename
+        let filename = std::path::Path::new(file)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("");
+
+        let count_str = format!("{}", count);
+        let prefix = if is_selected { "▸ " } else { "  " };
+        let used = prefix.len() + name.len() + 2 + filename.len() + 2 + count_str.len();
+        let padding = col_width.saturating_sub(used);
+
+        if is_selected {
+            let text = format!(
+                "{}{}{}{}  {}",
+                prefix,
+                name,
+                " ".repeat(padding + 2),
+                filename,
+                count_str,
+            );
+            lines.push(Line::from(Span::styled(text, selected_style)));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled(prefix, name_style),
+                Span::styled(name.clone(), name_style),
+                Span::styled(" ".repeat(padding + 2), name_style),
+                Span::styled(filename.to_string(), file_style),
+                Span::styled(format!("  {}", count_str), count_style),
+            ]));
+        }
     }
 
     // Fill remaining space
@@ -998,24 +1033,102 @@ fn draw_mib_info_modal(frame: &mut Frame, modal: &mut crate::modal::MibInfoModal
         lines.push(Line::from(""));
     }
 
-    // Scroll indicator
-    let total = modal.modules.len();
-    let scroll_hint = if total > list_height {
-        format!(
-            "  [{}-{} of {}]  [j/k] Scroll  [Esc] Close",
-            modal.scroll_offset + 1,
-            (modal.scroll_offset + list_height).min(total),
-            total,
-        )
-    } else {
-        "  [Esc] Close".to_string()
-    };
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(scroll_hint, dim_style)));
+    // Footer hint
+    let hint = "  [j/k] Navigate  [Enter] View  [/] Search  [Esc] Close";
+    lines.push(Line::from(Span::styled(hint, dim_style)));
 
-    // Truncate to viewport
+    // Search bar
+    if modal.search_active {
+        let search_line = Line::from(vec![
+            Span::styled("  /", Style::default().fg(Color::Yellow)),
+            Span::styled(
+                modal.search_query.clone(),
+                Style::default().fg(Color::White),
+            ),
+            Span::styled("_", Style::default().fg(Color::Yellow)),
+        ]);
+        lines.push(search_line);
+    }
+
     lines.truncate(content_height);
+    frame.render_widget(Paragraph::new(lines), inner);
+}
 
+fn draw_object_list_view(frame: &mut Frame, ov: &mut crate::modal::ObjectListView) {
+    let area = centered_rect(60, 70, frame.area());
+    frame.render_widget(Clear, area);
+
+    let title = format!(" {} ({} objects) ", ov.module_name, ov.filtered.len());
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let name_style = Style::default().fg(Color::White);
+    let oid_style = Style::default().fg(Color::Gray);
+    let dim_style = Style::default().fg(Color::Gray);
+    let selected_style = Style::default().fg(Color::Black).bg(Color::Cyan);
+
+    let content_height = inner.height as usize;
+    let search_lines = if ov.search_active { 1 } else { 0 };
+    let footer_lines = 1 + search_lines;
+    let list_height = content_height.saturating_sub(footer_lines);
+    ov.viewport_height = list_height;
+
+    let col_width = (inner.width as usize).saturating_sub(4);
+    let mut lines: Vec<Line> = Vec::new();
+
+    let visible: Vec<(usize, usize)> = ov
+        .filtered
+        .iter()
+        .enumerate()
+        .skip(ov.scroll_offset)
+        .take(list_height)
+        .map(|(vis_idx, &obj_idx)| (vis_idx, obj_idx))
+        .collect();
+
+    for (vis_idx, obj_idx) in &visible {
+        let (ref name, ref oid) = ov.objects[*obj_idx];
+        let is_selected = *vis_idx == ov.selected;
+
+        let used = 2 + name.len() + 2 + oid.len();
+        let padding = col_width.saturating_sub(used);
+
+        if is_selected {
+            let text = format!("  {}{}  {}", name, " ".repeat(padding), oid);
+            lines.push(Line::from(Span::styled(text, selected_style)));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled("  ", name_style),
+                Span::styled(name.clone(), name_style),
+                Span::styled(" ".repeat(padding + 2), name_style),
+                Span::styled(oid.clone(), oid_style),
+            ]));
+        }
+    }
+
+    // Fill remaining
+    let used = lines.len();
+    let target = content_height.saturating_sub(footer_lines);
+    for _ in used..target {
+        lines.push(Line::from(""));
+    }
+
+    let hint = "  [j/k] Navigate  [/] Search  [Esc] Back";
+    lines.push(Line::from(Span::styled(hint, dim_style)));
+
+    if ov.search_active {
+        let search_line = Line::from(vec![
+            Span::styled("  /", Style::default().fg(Color::Yellow)),
+            Span::styled(ov.search_query.clone(), Style::default().fg(Color::White)),
+            Span::styled("_", Style::default().fg(Color::Yellow)),
+        ]);
+        lines.push(search_line);
+    }
+
+    lines.truncate(content_height);
     frame.render_widget(Paragraph::new(lines), inner);
 }
 

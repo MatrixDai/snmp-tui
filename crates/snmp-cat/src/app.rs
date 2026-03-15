@@ -853,11 +853,26 @@ impl App {
         // Handle modal messages
         match &msg {
             Message::ModalClose => {
+                // MibInfo: Esc navigates back through layers
+                if let Some(Modal::MibInfo(m)) = &mut self.modal {
+                    if let Some(ref mut ov) = m.object_view {
+                        if ov.search_active {
+                            ov.deactivate_search();
+                        } else {
+                            m.close_object_view();
+                        }
+                    } else if m.search_active {
+                        m.deactivate_search();
+                    } else {
+                        self.modal = None;
+                    }
+                    return;
+                }
                 self.modal = None;
                 return;
             }
             Message::ModalConfirm => {
-                match &self.modal {
+                match &mut self.modal {
                     Some(Modal::Connect(m)) => {
                         if let Some(config) = m.build_config() {
                             self.connect(config);
@@ -866,7 +881,14 @@ impl App {
                     }
                     Some(Modal::Set(_)) => self.confirm_set(),
                     Some(Modal::Search(_)) => self.confirm_search(),
-                    Some(Modal::MibInfo(_)) => {} // read-only, no confirm action
+                    Some(Modal::MibInfo(m)) => {
+                        if m.search_active {
+                            m.search_active = false;
+                        } else if m.object_view.is_none() {
+                            let tree = &self.oid_tree;
+                            m.open_object_view(tree);
+                        }
+                    }
                     None => {}
                 }
                 return;
@@ -894,11 +916,29 @@ impl App {
                         let tree = &self.oid_tree;
                         m.type_char(c, tree);
                     }
-                    Some(Modal::MibInfo(m)) => match c {
-                        'j' => m.scroll_down(),
-                        'k' => m.scroll_up(),
-                        _ => {}
-                    },
+                    Some(Modal::MibInfo(m)) => {
+                        if let Some(ref mut ov) = m.object_view {
+                            if ov.search_active {
+                                ov.search_char(c);
+                            } else {
+                                match c {
+                                    'j' => ov.scroll_down(),
+                                    'k' => ov.scroll_up(),
+                                    '/' => ov.activate_search(),
+                                    _ => {}
+                                }
+                            }
+                        } else if m.search_active {
+                            m.search_char(c);
+                        } else {
+                            match c {
+                                'j' => m.scroll_down(),
+                                'k' => m.scroll_up(),
+                                '/' => m.activate_search(),
+                                _ => {}
+                            }
+                        }
+                    }
                     None => {}
                 },
                 Message::ModalBackspace => match &mut self.modal {
@@ -908,7 +948,15 @@ impl App {
                         let tree = &self.oid_tree;
                         m.backspace(tree);
                     }
-                    Some(Modal::MibInfo(_)) => {} // read-only
+                    Some(Modal::MibInfo(m)) => {
+                        if let Some(ref mut ov) = m.object_view {
+                            if ov.search_active {
+                                ov.search_backspace();
+                            }
+                        } else if m.search_active {
+                            m.search_backspace();
+                        }
+                    }
                     None => {}
                 },
                 Message::ModalCycle => {
@@ -918,12 +966,24 @@ impl App {
                 }
                 Message::ModalDown => match &mut self.modal {
                     Some(Modal::Search(m)) => m.select_next(),
-                    Some(Modal::MibInfo(m)) => m.scroll_down(),
+                    Some(Modal::MibInfo(m)) => {
+                        if let Some(ref mut ov) = m.object_view {
+                            ov.scroll_down();
+                        } else {
+                            m.scroll_down();
+                        }
+                    }
                     _ => {}
                 },
                 Message::ModalUp => match &mut self.modal {
                     Some(Modal::Search(m)) => m.select_prev(),
-                    Some(Modal::MibInfo(m)) => m.scroll_up(),
+                    Some(Modal::MibInfo(m)) => {
+                        if let Some(ref mut ov) = m.object_view {
+                            ov.scroll_up();
+                        } else {
+                            m.scroll_up();
+                        }
+                    }
                     _ => {}
                 },
                 _ => {}

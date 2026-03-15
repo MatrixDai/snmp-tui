@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use mib_parser::{NodeIndex, OidTree, Syntax};
 use snmp_client::{AuthProtocol, PrivProtocol, SnmpConfig, SnmpValue, SnmpVersion, V3Credentials};
 
@@ -487,51 +485,233 @@ impl SearchModal {
 // ============================================================
 
 pub struct MibInfoModal {
-    /// Sorted list of (module_name, object_count).
-    pub modules: Vec<(String, usize)>,
+    /// Full list of (module_name, object_count, source_file).
+    pub modules: Vec<(String, usize, String)>,
+    /// Filtered view (indices into `modules`) when searching.
+    pub filtered: Vec<usize>,
     /// Total object count across all modules.
     pub total_objects: usize,
+    /// Cursor position in filtered list.
+    pub selected: usize,
     /// Scroll offset for the list.
     pub scroll_offset: usize,
     /// Viewport height (set during render).
     pub viewport_height: usize,
+    /// Search state.
+    pub search_active: bool,
+    pub search_query: String,
+    /// Sub-view: object list for a selected module.
+    pub object_view: Option<ObjectListView>,
 }
 
 impl MibInfoModal {
     pub fn new(tree: &OidTree) -> Self {
-        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        let mut module_map: std::collections::BTreeMap<String, (usize, String)> =
+            std::collections::BTreeMap::new();
         for i in 0..tree.node_count() {
             let idx = NodeIndex::from_raw(i);
             if let Some(node) = tree.get(idx)
                 && let Some(ref mib_obj) = node.mib_object
                 && !mib_obj.module.is_empty()
             {
-                *counts.entry(mib_obj.module.clone()).or_insert(0) += 1;
+                let entry = module_map
+                    .entry(mib_obj.module.clone())
+                    .or_insert((0, mib_obj.source_file.clone()));
+                entry.0 += 1;
             }
         }
-        let total_objects = counts.values().sum();
-        let modules: Vec<(String, usize)> = counts.into_iter().collect();
+        let total_objects = module_map.values().map(|(c, _)| c).sum();
+        let modules: Vec<_> = module_map
+            .into_iter()
+            .map(|(name, (count, file))| (name, count, file))
+            .collect();
+        let filtered = (0..modules.len()).collect();
         Self {
             modules,
+            filtered,
             total_objects,
+            selected: 0,
             scroll_offset: 0,
             viewport_height: 0,
+            search_active: false,
+            search_query: String::new(),
+            object_view: None,
         }
     }
 
     pub fn scroll_up(&mut self) {
-        if self.scroll_offset > 0 {
-            self.scroll_offset -= 1;
+        if self.selected > 0 {
+            self.selected -= 1;
+            // Adjust scroll to keep selected visible
+            if self.selected < self.scroll_offset {
+                self.scroll_offset = self.selected;
+            }
         }
     }
 
     pub fn scroll_down(&mut self) {
-        let total = self.modules.len();
-        if self.viewport_height > 0
-            && total > self.viewport_height
-            && self.scroll_offset < total - self.viewport_height
-        {
-            self.scroll_offset += 1;
+        if self.selected + 1 < self.filtered.len() {
+            self.selected += 1;
+            // Adjust scroll to keep selected visible
+            if self.viewport_height > 0
+                && self.selected >= self.scroll_offset + self.viewport_height
+            {
+                self.scroll_offset = self.selected - self.viewport_height + 1;
+            }
         }
+    }
+
+    pub fn activate_search(&mut self) {
+        self.search_active = true;
+        self.search_query.clear();
+    }
+
+    pub fn deactivate_search(&mut self) {
+        self.search_active = false;
+        self.search_query.clear();
+        self.filtered = (0..self.modules.len()).collect();
+        self.selected = 0;
+        self.scroll_offset = 0;
+    }
+
+    pub fn search_char(&mut self, c: char) {
+        self.search_query.push(c);
+        self.refilter();
+    }
+
+    pub fn search_backspace(&mut self) {
+        self.search_query.pop();
+        self.refilter();
+    }
+
+    fn refilter(&mut self) {
+        let query = self.search_query.to_lowercase();
+        if query.is_empty() {
+            self.filtered = (0..self.modules.len()).collect();
+        } else {
+            self.filtered = self
+                .modules
+                .iter()
+                .enumerate()
+                .filter(|(_, (name, _, _))| name.to_lowercase().contains(&query))
+                .map(|(i, _)| i)
+                .collect();
+        }
+        self.selected = 0;
+        self.scroll_offset = 0;
+    }
+
+    pub fn open_object_view(&mut self, tree: &OidTree) {
+        let module_idx = match self.filtered.get(self.selected) {
+            Some(&idx) => idx,
+            None => return,
+        };
+        let module_name = &self.modules[module_idx].0;
+        let mut objects: Vec<(String, String)> = Vec::new();
+        for i in 0..tree.node_count() {
+            let idx = NodeIndex::from_raw(i);
+            if let Some(node) = tree.get(idx)
+                && let Some(ref mib_obj) = node.mib_object
+                && mib_obj.module == *module_name
+            {
+                let oid_str = if mib_obj.oid.is_empty() {
+                    String::new()
+                } else {
+                    mib_obj.oid.to_string()
+                };
+                objects.push((mib_obj.name.clone(), oid_str));
+            }
+        }
+        objects.sort_by(|a, b| a.0.cmp(&b.0));
+        let filtered = (0..objects.len()).collect();
+        self.object_view = Some(ObjectListView {
+            module_name: module_name.clone(),
+            objects,
+            selected: 0,
+            scroll_offset: 0,
+            viewport_height: 0,
+            search_active: false,
+            search_query: String::new(),
+            filtered,
+        });
+    }
+
+    pub fn close_object_view(&mut self) {
+        self.object_view = None;
+    }
+}
+
+pub struct ObjectListView {
+    pub module_name: String,
+    pub objects: Vec<(String, String)>,
+    pub selected: usize,
+    pub scroll_offset: usize,
+    pub viewport_height: usize,
+    pub search_active: bool,
+    pub search_query: String,
+    pub filtered: Vec<usize>,
+}
+
+impl ObjectListView {
+    pub fn scroll_up(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+            if self.selected < self.scroll_offset {
+                self.scroll_offset = self.selected;
+            }
+        }
+    }
+
+    pub fn scroll_down(&mut self) {
+        if self.selected + 1 < self.filtered.len() {
+            self.selected += 1;
+            if self.viewport_height > 0
+                && self.selected >= self.scroll_offset + self.viewport_height
+            {
+                self.scroll_offset = self.selected - self.viewport_height + 1;
+            }
+        }
+    }
+
+    pub fn activate_search(&mut self) {
+        self.search_active = true;
+        self.search_query.clear();
+    }
+
+    pub fn deactivate_search(&mut self) {
+        self.search_active = false;
+        self.search_query.clear();
+        self.filtered = (0..self.objects.len()).collect();
+        self.selected = 0;
+        self.scroll_offset = 0;
+    }
+
+    pub fn search_char(&mut self, c: char) {
+        self.search_query.push(c);
+        self.refilter();
+    }
+
+    pub fn search_backspace(&mut self) {
+        self.search_query.pop();
+        self.refilter();
+    }
+
+    fn refilter(&mut self) {
+        let query = self.search_query.to_lowercase();
+        if query.is_empty() {
+            self.filtered = (0..self.objects.len()).collect();
+        } else {
+            self.filtered = self
+                .objects
+                .iter()
+                .enumerate()
+                .filter(|(_, (name, oid))| {
+                    name.to_lowercase().contains(&query) || oid.contains(&query)
+                })
+                .map(|(i, _)| i)
+                .collect();
+        }
+        self.selected = 0;
+        self.scroll_offset = 0;
     }
 }

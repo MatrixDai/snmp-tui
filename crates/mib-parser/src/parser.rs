@@ -445,6 +445,7 @@ fn parse_module_identity(
         name: obj_name,
         oid: Oid::new(Vec::new()), // resolved later
         module: module_name.to_string(),
+        source_file: String::new(),
         syntax: None,
         access: None,
         status: Some(Status::Current),
@@ -528,6 +529,7 @@ fn parse_object_type(pair: pest::iterators::Pair<Rule>, module_name: &str) -> Op
         name: obj_name,
         oid: Oid::new(Vec::new()), // resolved later
         module: module_name.to_string(),
+        source_file: String::new(),
         syntax,
         access,
         status,
@@ -574,6 +576,7 @@ fn parse_object_identity(
         name: obj_name,
         oid: Oid::new(Vec::new()),
         module: module_name.to_string(),
+        source_file: String::new(),
         syntax: None,
         access: None,
         status,
@@ -628,6 +631,7 @@ fn parse_textual_convention(
         name: obj_name,
         oid: Oid::new(Vec::new()), // TCs don't have OIDs
         module: module_name.to_string(),
+        source_file: String::new(),
         syntax,
         access: None,
         status,
@@ -666,6 +670,7 @@ fn parse_oid_assignment(
         name: obj_name.clone(),
         oid: Oid::new(Vec::new()), // resolved later
         module: module_name.to_string(),
+        source_file: String::new(),
         syntax: None,
         access: None,
         status: None,
@@ -714,6 +719,7 @@ fn parse_generic_def_with_oid(
         name: obj_name,
         oid: Oid::new(Vec::new()),
         module: module_name.to_string(),
+        source_file: String::new(),
         syntax: None,
         access: None,
         status,
@@ -838,6 +844,7 @@ pub fn resolve_all_oids(modules: &[ParsedModule]) -> HashMap<String, Oid> {
 #[derive(Debug, Clone)]
 pub struct RawParsedModule {
     pub name: String,
+    pub source_file: String,
     pub objects: Vec<(MibObject, Vec<OidComponent>)>,
     pub imports: Vec<ImportClause>,
     pub oid_assignments: HashMap<String, Vec<OidComponent>>,
@@ -900,6 +907,7 @@ fn parse_module_definition_raw(
 
     Ok(RawParsedModule {
         name,
+        source_file: String::new(),
         objects,
         imports,
         oid_assignments,
@@ -966,6 +974,7 @@ fn parse_assignment_raw(
                             name: obj_name,
                             oid: Oid::new(Vec::new()),
                             module: module_name.to_string(),
+                            source_file: String::new(),
                             syntax: None,
                             access: None,
                             status: None,
@@ -1039,6 +1048,7 @@ fn parse_def_with_oid_raw(
             name: obj_name,
             oid: Oid::new(Vec::new()),
             module: module_name.to_string(),
+            source_file: String::new(),
             syntax: None,
             access: None,
             status: if is_module_identity {
@@ -1139,6 +1149,7 @@ fn parse_object_type_raw(
             name: obj_name,
             oid: Oid::new(Vec::new()),
             module: module_name.to_string(),
+            source_file: String::new(),
             syntax,
             access,
             status,
