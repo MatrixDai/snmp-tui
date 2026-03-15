@@ -18,7 +18,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use app::App;
-use config::{CliArgs, load_config_file, merge_config, to_snmp_config};
+use config::{CliArgs, load_config_file, merge_config};
 
 fn main() -> io::Result<()> {
     let cli = CliArgs::parse();
@@ -27,9 +27,6 @@ fn main() -> io::Result<()> {
 
     // Load MIBs
     let oid_tree = load_mibs(&app_config);
-
-    // Build SNMP config if host is provided (for auto-connect)
-    let snmp_config = to_snmp_config(&app_config);
 
     // Setup terminal
     let mut terminal = setup_terminal()?;
@@ -45,8 +42,7 @@ fn main() -> io::Result<()> {
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
 
     // Run application within tokio context
-    let result =
-        runtime.block_on(async { run(&mut terminal, oid_tree, snmp_config, &app_config).await });
+    let result = runtime.block_on(async { run(&mut terminal, oid_tree, &app_config).await });
 
     // Restore terminal
     restore_terminal()?;
@@ -71,25 +67,15 @@ fn restore_terminal() -> io::Result<()> {
 async fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     oid_tree: mib_parser::OidTree,
-    snmp_config: Option<snmp_client::SnmpConfig>,
     app_config: &config::AppConfig,
 ) -> io::Result<()> {
-    let mut app = App::new(oid_tree);
-
-    // Pre-fill connect modal defaults from config
-    app.connect_host = app_config.host.clone().unwrap_or_default();
-    app.connect_port = app_config.port;
-    app.connect_version = app_config.snmp_version.clone();
-    app.connect_community = app_config.community.clone();
-    app.max_walk_entries = app_config.max_walk_entries;
+    let mut app = App::new(oid_tree, app_config);
 
     // Initialize SNMP worker
     app.init_worker(app_config.debug);
 
-    // Auto-connect if host was provided via CLI/config
-    if let Some(config) = snmp_config {
-        app.connect(config);
-    }
+    // Always show connection manager on startup
+    app.open_connection_manager(true);
 
     while app.running {
         terminal.draw(|frame| ui::draw(frame, &mut app))?;

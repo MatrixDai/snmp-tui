@@ -15,22 +15,6 @@ pub struct CliArgs {
     #[arg(long = "mib-file")]
     pub mib_file: Option<PathBuf>,
 
-    /// SNMP target host [default: localhost]
-    #[arg(long)]
-    pub host: Option<String>,
-
-    /// SNMP target port [default: 161]
-    #[arg(long)]
-    pub port: Option<u16>,
-
-    /// SNMP community string [default: public]
-    #[arg(long)]
-    pub community: Option<String>,
-
-    /// SNMP version (1, 2c, 3) [default: v2c]
-    #[arg(long = "snmp-version")]
-    pub snmp_version: Option<String>,
-
     /// SNMP timeout in milliseconds [default: 5000]
     #[arg(long)]
     pub timeout: Option<u64>,
@@ -39,7 +23,7 @@ pub struct CliArgs {
     #[arg(long)]
     pub retries: Option<u32>,
 
-    /// Maximum number of WALK result entries before truncation [default: 20000]
+    /// Maximum number of WALK result entries before truncation [default: 5000]
     #[arg(long)]
     pub max_walk_entries: Option<usize>,
 
@@ -48,35 +32,122 @@ pub struct CliArgs {
     pub debug: bool,
 }
 
+/// A saved connection entry in the config file.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ConnectionEntry {
+    pub alias: String,
+    pub host: String,
+    #[serde(default = "default_port")]
+    pub port: u16,
+    #[serde(default = "default_version")]
+    pub version: String,
+    #[serde(default = "default_community")]
+    pub community: String,
+    // SNMPv3 fields
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_protocol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_password: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priv_protocol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priv_password: Option<String>,
+}
+
+fn default_port() -> u16 {
+    161
+}
+fn default_version() -> String {
+    "v2c".to_string()
+}
+fn default_community() -> String {
+    "public".to_string()
+}
+
+impl ConnectionEntry {
+    /// Convert to an `SnmpConfig` for the SNMP client.
+    pub fn to_snmp_config(&self, timeout_ms: u64, retries: u32) -> snmp_client::SnmpConfig {
+        let version = match self.version.as_str() {
+            "1" | "v1" => snmp_client::SnmpVersion::V1,
+            "3" | "v3" => snmp_client::SnmpVersion::V3,
+            _ => snmp_client::SnmpVersion::V2c,
+        };
+
+        let v3_credentials = if version == snmp_client::SnmpVersion::V3 {
+            let auth_protocol = self.auth_protocol.as_deref().and_then(|s| match s {
+                "MD5" => Some(snmp_client::AuthProtocol::Md5),
+                "SHA" => Some(snmp_client::AuthProtocol::Sha1),
+                "SHA-224" => Some(snmp_client::AuthProtocol::Sha224),
+                "SHA-256" => Some(snmp_client::AuthProtocol::Sha256),
+                "SHA-384" => Some(snmp_client::AuthProtocol::Sha384),
+                "SHA-512" => Some(snmp_client::AuthProtocol::Sha512),
+                _ => None,
+            });
+            let priv_protocol = self.priv_protocol.as_deref().and_then(|s| match s {
+                "DES" => Some(snmp_client::PrivProtocol::Des),
+                "AES-128" => Some(snmp_client::PrivProtocol::Aes128),
+                "AES-192" => Some(snmp_client::PrivProtocol::Aes192),
+                "AES-256" => Some(snmp_client::PrivProtocol::Aes256),
+                _ => None,
+            });
+            Some(snmp_client::V3Credentials {
+                username: self.username.clone().unwrap_or_default(),
+                auth_protocol,
+                auth_password: if auth_protocol.is_some() {
+                    self.auth_password.clone()
+                } else {
+                    None
+                },
+                priv_protocol,
+                priv_password: if priv_protocol.is_some() {
+                    self.priv_password.clone()
+                } else {
+                    None
+                },
+            })
+        } else {
+            None
+        };
+
+        snmp_client::SnmpConfig {
+            host: self.host.clone(),
+            port: self.port,
+            version,
+            community: self.community.clone(),
+            timeout_ms,
+            retries,
+            v3_credentials,
+        }
+    }
+}
+
 /// Configuration loaded from / saved to `~/.snmp-cat/config.toml`.
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct FileConfig {
     pub mib_dirs: Vec<PathBuf>,
     pub mib_files: Vec<PathBuf>,
-    pub host: Option<String>,
-    pub port: Option<u16>,
-    pub community: Option<String>,
-    pub snmp_version: Option<String>,
+    pub max_walk_entries: Option<usize>,
     pub timeout: Option<u64>,
     pub retries: Option<u32>,
-    pub max_walk_entries: Option<usize>,
+    pub last_connection: Option<String>,
+    #[serde(default)]
+    pub connections: Vec<ConnectionEntry>,
 }
 
 /// Resolved application configuration (file + CLI merged).
 #[derive(Debug)]
-#[allow(dead_code)] // Fields used in later milestones
 pub struct AppConfig {
     pub mib_dirs: Vec<PathBuf>,
     pub mib_files: Vec<PathBuf>,
-    pub host: Option<String>,
-    pub port: u16,
-    pub community: String,
-    pub snmp_version: String,
     pub timeout_ms: u64,
     pub retries: u32,
     pub max_walk_entries: usize,
     pub debug: bool,
+    pub last_connection: Option<String>,
+    pub connections: Vec<ConnectionEntry>,
 }
 
 impl Default for AppConfig {
@@ -84,14 +155,12 @@ impl Default for AppConfig {
         Self {
             mib_dirs: Vec::new(),
             mib_files: Vec::new(),
-            host: None,
-            port: 161,
-            community: "public".to_string(),
-            snmp_version: "v2c".to_string(),
             timeout_ms: 5000,
             retries: 1,
-            max_walk_entries: 20000,
+            max_walk_entries: 5000,
             debug: false,
+            last_connection: None,
+            connections: Vec::new(),
         }
     }
 }
@@ -108,7 +177,7 @@ pub fn load_config_file() -> FileConfig {
     FileConfig::default()
 }
 
-/// Merge file config with CLI args. CLI takes precedence.
+/// Merge file config with CLI args. CLI takes precedence for global settings.
 pub fn merge_config(file: FileConfig, cli: &CliArgs) -> AppConfig {
     let mut mib_dirs = file.mib_dirs;
     let mut mib_files = file.mib_files;
@@ -123,56 +192,51 @@ pub fn merge_config(file: FileConfig, cli: &CliArgs) -> AppConfig {
     AppConfig {
         mib_dirs,
         mib_files,
-        host: cli.host.clone().or(file.host),
-        port: cli.port.unwrap_or(file.port.unwrap_or(161)),
-        community: cli
-            .community
-            .clone()
-            .or(file.community)
-            .unwrap_or_else(|| "public".to_string()),
-        snmp_version: cli
-            .snmp_version
-            .clone()
-            .or(file.snmp_version)
-            .unwrap_or_else(|| "v2c".to_string()),
-        timeout_ms: cli.timeout.or(file.timeout).unwrap_or(20000),
+        timeout_ms: cli.timeout.or(file.timeout).unwrap_or(5000),
         retries: cli.retries.or(file.retries).unwrap_or(1),
         max_walk_entries: cli
             .max_walk_entries
             .or(file.max_walk_entries)
-            .unwrap_or(20000),
+            .unwrap_or(5000),
         debug: cli.debug,
+        last_connection: file.last_connection,
+        connections: file.connections,
     }
 }
 
-/// Convert AppConfig to snmp_client::SnmpConfig for connecting to a device.
-pub fn to_snmp_config(app_config: &AppConfig) -> Option<snmp_client::SnmpConfig> {
-    let host = app_config.host.as_ref()?;
+/// Save a connection entry to the config file.
+///
+/// If a connection with the same alias exists, it is updated in place.
+/// Otherwise the entry is appended (max 20 connections; oldest dropped if full).
+/// Also sets `last_connection` to this alias.
+pub fn save_connection(entry: &ConnectionEntry) {
+    let mut config = load_config_file();
 
-    let version = match app_config.snmp_version.as_str() {
-        "1" | "v1" => snmp_client::SnmpVersion::V1,
-        "3" | "v3" => snmp_client::SnmpVersion::V3,
-        _ => snmp_client::SnmpVersion::V2c,
-    };
+    if let Some(existing) = config
+        .connections
+        .iter_mut()
+        .find(|c| c.alias == entry.alias)
+    {
+        *existing = entry.clone();
+    } else {
+        // Enforce max 20
+        while config.connections.len() >= 20 {
+            config.connections.remove(0);
+        }
+        config.connections.push(entry.clone());
+    }
 
-    Some(snmp_client::SnmpConfig {
-        host: host.clone(),
-        port: app_config.port,
-        version,
-        community: app_config.community.clone(),
-        timeout_ms: app_config.timeout_ms,
-        retries: app_config.retries,
-        v3_credentials: None,
-    })
+    config.last_connection = Some(entry.alias.clone());
+    save_config_file(&config);
 }
 
-/// Save connection settings to the config file, merging with existing config.
-pub fn save_connection_settings(host: &str, port: u16, version: &str, community: &str) {
+/// Delete a connection by alias from the config file.
+pub fn delete_connection(alias: &str) {
     let mut config = load_config_file();
-    config.host = Some(host.to_string());
-    config.port = Some(port);
-    config.snmp_version = Some(version.to_string());
-    config.community = Some(community.to_string());
+    config.connections.retain(|c| c.alias != alias);
+    if config.last_connection.as_deref() == Some(alias) {
+        config.last_connection = None;
+    }
     save_config_file(&config);
 }
 

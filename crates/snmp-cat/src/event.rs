@@ -3,7 +3,6 @@ use std::time::Duration;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{App, FocusedPanel, Message};
-use crate::modal::Modal;
 
 /// Poll for crossterm events and convert to application Messages.
 /// Returns None if no event is available within the timeout.
@@ -56,9 +55,11 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
     // Global keys (always active)
     match key.code {
         KeyCode::Char('q') => return Some(Message::Quit),
-        KeyCode::Char('o') => return Some(Message::OpenConnectModal),
+        KeyCode::Char('c') => return Some(Message::OpenConnectionManager),
         KeyCode::Char('m') => return Some(Message::OpenMibInfoModal),
-        KeyCode::Char('c') => return Some(Message::ClearResults),
+        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            return Some(Message::ClearResults);
+        }
         KeyCode::Tab => {
             return if key.modifiers.contains(KeyModifiers::SHIFT) {
                 Some(Message::FocusPrev)
@@ -78,21 +79,10 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
     }
 }
 
-fn handle_modal_key(key: KeyEvent, app: &App) -> Option<Message> {
+fn handle_modal_key(key: KeyEvent, _app: &App) -> Option<Message> {
     match key.code {
         KeyCode::Esc => Some(Message::ModalClose),
-        KeyCode::Enter => {
-            // In connect modal, if focused on a cycle field, cycle it instead of confirming
-            if let Some(Modal::Connect(m)) = &app.modal
-                && matches!(
-                    m.fields[m.focused_field].kind,
-                    crate::modal::FieldKind::Cycle(_)
-                )
-            {
-                return Some(Message::ModalCycle);
-            }
-            Some(Message::ModalConfirm)
-        }
+        KeyCode::Enter => Some(Message::ModalConfirm),
         KeyCode::Tab => {
             if key.modifiers.contains(KeyModifiers::SHIFT) {
                 Some(Message::ModalTabPrev)
@@ -130,6 +120,7 @@ fn handle_tree_key(key: KeyEvent) -> Option<Message> {
         KeyCode::Char('n') => Some(Message::SnmpGetNext),
         KeyCode::Char('w') => Some(Message::SnmpWalk),
         KeyCode::Char('s') => Some(Message::OpenSetModal),
+        KeyCode::Char('y') => Some(Message::CopyTreeNode),
         _ => None,
     }
 }
@@ -144,6 +135,7 @@ fn handle_detail_key(key: KeyEvent, app: &App) -> Option<Message> {
         KeyCode::Char('n') if app.detail_state.search.confirmed => Some(Message::DetailSearchNext),
         KeyCode::Char('N') if app.detail_state.search.confirmed => Some(Message::DetailSearchPrev),
         KeyCode::Esc if app.detail_state.search.confirmed => Some(Message::InlineSearchClose),
+        KeyCode::Char('y') => Some(Message::CopyDetail),
         _ => None,
     }
 }

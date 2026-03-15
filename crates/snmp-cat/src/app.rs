@@ -4,8 +4,8 @@ use mib_parser::OidTree;
 use snmp_client::{OperationType, SnmpRequest, SnmpResponse, SnmpResult, SnmpWorker};
 use tokio::sync::mpsc;
 
-use crate::config;
-use crate::modal::{ConnectModal, MibInfoModal, Modal, SearchModal, SetModal};
+use crate::config::{self, ConnectionEntry};
+use crate::modal::{ConnectionManagerModal, MibInfoModal, Modal, SearchModal, SetModal};
 
 /// SNMP query strategy determined from MIB object metadata.
 enum QueryStrategy {
@@ -78,10 +78,12 @@ pub enum Message {
     SnmpWalk,
 
     // Clipboard
+    CopyTreeNode,
+    CopyDetail,
     CopyResult,
 
     // Modal dialogs
-    OpenConnectModal,
+    OpenConnectionManager,
     OpenSetModal,
     OpenSearchModal,
     OpenMibInfoModal,
@@ -93,7 +95,6 @@ pub enum Message {
     ModalTabPrev,
     ModalChar(char),
     ModalBackspace,
-    ModalCycle,
     ModalDown,
     ModalUp,
 
@@ -364,6 +365,7 @@ impl ResultsState {
 pub enum ConnectionState {
     Disconnected,
     Connecting,
+    Validating { host: String, version: String },
     Connected { host: String, version: String },
     Error(String),
 }
@@ -373,6 +375,7 @@ impl std::fmt::Display for ConnectionState {
         match self {
             Self::Disconnected => write!(f, "No device"),
             Self::Connecting => write!(f, "Connecting..."),
+            Self::Validating { .. } => write!(f, "Validating..."),
             Self::Connected { host, version } => write!(f, "{} {}", host, version),
             Self::Error(e) => write!(f, "Error: {}", e),
         }
@@ -400,11 +403,6 @@ pub struct App {
     pub response_rx: Option<mpsc::Receiver<SnmpResponse>>,
     /// Pending connect info (host, version) for when connection response arrives.
     pending_connect_info: Option<(String, String)>,
-    /// Current connection config values (for pre-filling the connect modal).
-    pub connect_host: String,
-    pub connect_port: u16,
-    pub connect_version: String,
-    pub connect_community: String,
     /// Last OID returned by GETNEXT, keyed by the base (tree node) OID.
     /// Used to advance through table rows on repeated GETNEXT presses.
     last_getnext_oid: Option<(mib_parser::Oid, mib_parser::Oid)>,
@@ -414,12 +412,24 @@ pub struct App {
     pub show_help: bool,
     /// Transient status message (e.g., "Copied to clipboard").
     pub status_message: Option<(String, std::time::Instant)>,
-    /// Maximum number of WALK result entries before truncation (9.5).
+    /// Maximum number of WALK result entries before truncation.
     pub max_walk_entries: usize,
+    /// Global timeout from config.
+    pub timeout_ms: u64,
+    /// Global retries from config.
+    pub retries: u32,
+    /// Whether we are waiting for a validation GET response.
+    pub pending_validation: bool,
+    /// The connection entry being connected (for saving after validation).
+    pub pending_connection_entry: Option<ConnectionEntry>,
+    /// Saved connections from config (for connection manager).
+    pub connections: Vec<ConnectionEntry>,
+    /// Last used connection alias.
+    pub last_connection: Option<String>,
 }
 
 impl App {
-    pub fn new(oid_tree: OidTree) -> Self {
+    pub fn new(oid_tree: OidTree, app_config: &config::AppConfig) -> Self {
         let tree_state = TreeState::new(&oid_tree);
         Self {
             focused: FocusedPanel::Tree,
@@ -435,15 +445,17 @@ impl App {
             worker: None,
             response_rx: None,
             pending_connect_info: None,
-            connect_host: String::new(),
-            connect_port: 161,
-            connect_version: "v2c".to_string(),
-            connect_community: "public".to_string(),
             last_getnext_oid: None,
             pending_g: false,
             show_help: false,
             status_message: None,
-            max_walk_entries: 20000,
+            max_walk_entries: app_config.max_walk_entries,
+            timeout_ms: app_config.timeout_ms,
+            retries: app_config.retries,
+            pending_validation: false,
+            pending_connection_entry: None,
+            connections: app_config.connections.clone(),
+            last_connection: app_config.last_connection.clone(),
         }
     }
 
@@ -459,15 +471,19 @@ impl App {
         self.response_rx = Some(response_rx);
     }
 
+    /// Open the connection manager modal.
+    pub fn open_connection_manager(&mut self, is_startup: bool) {
+        self.modal = Some(Modal::ConnectionManager(ConnectionManagerModal::new(
+            self.connections.clone(),
+            self.last_connection.clone(),
+            is_startup,
+        )));
+    }
+
     /// Send a connect request to the SNMP worker.
     pub fn connect(&mut self, config: snmp_client::SnmpConfig) {
         let host = config.destination();
         let version = config.version.to_string();
-        // Save config values for future modal pre-fill
-        self.connect_host = config.host.clone();
-        self.connect_port = config.port;
-        self.connect_version = config.version.to_string();
-        self.connect_community = config.community.clone();
         self.connection = ConnectionState::Connecting;
         self.inflight_op = Some(OperationType::Connect);
         if let Some(ref worker) = self.worker {
@@ -617,6 +633,52 @@ impl App {
     pub fn handle_snmp_response(&mut self, response: SnmpResponse) {
         self.inflight_op = None;
 
+        // Handle validation GET response
+        if self.pending_validation
+            && matches!(
+                response.operation,
+                OperationType::Get | OperationType::GetNext
+            )
+        {
+            self.pending_validation = false;
+            match &response.result {
+                SnmpResult::Value(_, _) => {
+                    if let ConnectionState::Validating {
+                        ref host,
+                        ref version,
+                    } = self.connection
+                    {
+                        let host = host.clone();
+                        let version = version.clone();
+                        self.connection = ConnectionState::Connected { host, version };
+                        // Save connection to config
+                        if let Some(ref entry) = self.pending_connection_entry {
+                            config::save_connection(entry);
+                            // Update local connections list
+                            if let Some(existing) =
+                                self.connections.iter_mut().find(|c| c.alias == entry.alias)
+                            {
+                                *existing = entry.clone();
+                            } else {
+                                self.connections.push(entry.clone());
+                            }
+                            self.last_connection = Some(entry.alias.clone());
+                        }
+                        self.pending_connection_entry = None;
+                    }
+                    self.push_result_entry(&response);
+                }
+                SnmpResult::Error(e) => {
+                    self.connection = ConnectionState::Error(format!("Validation failed: {}", e));
+                    self.pending_connect_info = None;
+                    self.pending_connection_entry = None;
+                    self.push_result_entry(&response);
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // Track last GETNEXT result OID for advancing through table rows
         if matches!(
             response.operation,
@@ -632,19 +694,20 @@ impl App {
                 match &response.result {
                     SnmpResult::Ok(_) => {
                         if let Some((host, version)) = self.pending_connect_info.take() {
-                            self.connection = ConnectionState::Connected { host, version };
-                            // 9.1: Persist connection settings to config file
-                            config::save_connection_settings(
-                                &self.connect_host,
-                                self.connect_port,
-                                &self.connect_version,
-                                &self.connect_community,
-                            );
+                            self.connection = ConnectionState::Validating { host, version };
+                            // Send validation GET sysDescr.0
+                            let sys_descr = mib_parser::Oid::new(vec![1, 3, 6, 1, 2, 1, 1, 1, 0]);
+                            if let Some(ref worker) = self.worker {
+                                let _ = worker.try_send(SnmpRequest::Get(sys_descr));
+                                self.pending_validation = true;
+                                self.inflight_op = Some(OperationType::Get);
+                            }
                         }
                     }
                     SnmpResult::Error(e) => {
                         self.connection = ConnectionState::Error(e.clone());
                         self.pending_connect_info = None;
+                        self.pending_connection_entry = None;
                     }
                     _ => {}
                 }
@@ -729,6 +792,100 @@ impl App {
         // Auto-scroll will be applied in draw
     }
 
+    /// Copy text to system clipboard via OSC 52 escape sequence.
+    /// Works in most modern terminals including over SSH.
+    fn copy_to_clipboard(&mut self, text: &str) {
+        use base64::Engine;
+        use std::io::Write;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+        let osc52 = format!("\x1b]52;c;{}\x07", encoded);
+        let result = std::io::stdout()
+            .write_all(osc52.as_bytes())
+            .and_then(|_| std::io::stdout().flush());
+        match result {
+            Ok(()) => {
+                self.status_message =
+                    Some(("Copied to clipboard".to_string(), std::time::Instant::now()));
+            }
+            Err(_) => {
+                self.status_message = Some((
+                    "Failed to copy to clipboard".to_string(),
+                    std::time::Instant::now(),
+                ));
+            }
+        }
+    }
+
+    /// Copy selected tree node as "name (OID)".
+    fn copy_tree_node(&mut self) {
+        let node_idx = match self.tree_state.selected_node() {
+            Some(idx) => idx,
+            None => return,
+        };
+        let node = match self.oid_tree.get(node_idx) {
+            Some(n) => n,
+            None => return,
+        };
+        let oid = self
+            .oid_tree
+            .resolve_oid(node_idx)
+            .map(|o| o.to_string())
+            .unwrap_or_default();
+        let name = if node.name.is_empty() {
+            format!("{}", node.subid)
+        } else {
+            node.name.clone()
+        };
+        let text = format!("{} ({})", name, oid);
+        self.copy_to_clipboard(&text);
+    }
+
+    /// Copy the full detail panel content as plain text.
+    fn copy_detail(&mut self) {
+        let node_idx = match self.tree_state.selected_node() {
+            Some(idx) => idx,
+            None => return,
+        };
+        let node = match self.oid_tree.get(node_idx) {
+            Some(n) => n,
+            None => return,
+        };
+        let oid = self
+            .oid_tree
+            .resolve_oid(node_idx)
+            .map(|o| o.to_string())
+            .unwrap_or_default();
+        let name = if node.name.is_empty() {
+            format!("{}", node.subid)
+        } else {
+            node.name.clone()
+        };
+
+        let mut lines = vec![format!("Name: {}", name), format!("OID: {}", oid)];
+
+        if let Some(ref mib_obj) = node.mib_object {
+            lines.push(format!("Module: {}", mib_obj.module));
+            if let Some(ref syntax) = mib_obj.syntax {
+                lines.push(format!("Syntax: {:?}", syntax));
+            }
+            if let Some(ref access) = mib_obj.access {
+                lines.push(format!("Access: {:?}", access));
+            }
+            if let Some(ref status) = mib_obj.status {
+                lines.push(format!("Status: {:?}", status));
+            }
+            if let Some(ref index_clause) = mib_obj.index_clause {
+                lines.push(format!("Index: {}", index_clause.join(", ")));
+            }
+            if let Some(ref desc) = mib_obj.description {
+                lines.push(format!("Description: {}", desc));
+            }
+        }
+
+        let text = lines.join("\n");
+        self.copy_to_clipboard(&text);
+    }
+
     /// Copy the most recent result entry's value to system clipboard.
     fn copy_selected_result(&mut self) {
         if let Some(entry) = self.results_state.entries.last() {
@@ -747,27 +904,7 @@ impl App {
                     .join("\n"),
                 ResultValue::Error(e) => format!("{} -> {}", entry.oid, e),
             };
-            // Use OSC 52 escape sequence to set clipboard via terminal emulator.
-            // This works in most modern terminals including over SSH.
-            use base64::Engine;
-            use std::io::Write;
-            let encoded = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
-            let osc52 = format!("\x1b]52;c;{}\x07", encoded);
-            let result = std::io::stdout()
-                .write_all(osc52.as_bytes())
-                .and_then(|_| std::io::stdout().flush());
-            match result {
-                Ok(()) => {
-                    self.status_message =
-                        Some(("Copied to clipboard".to_string(), std::time::Instant::now()));
-                }
-                Err(_) => {
-                    self.status_message = Some((
-                        "Failed to copy to clipboard".to_string(),
-                        std::time::Instant::now(),
-                    ));
-                }
-            }
+            self.copy_to_clipboard(&text);
         }
     }
 
@@ -843,6 +980,63 @@ impl App {
         self.modal = None;
     }
 
+    /// Handle connection manager confirm — connect to selected or save from edit view.
+    fn confirm_connection_manager(&mut self) {
+        let mgr = match &mut self.modal {
+            Some(Modal::ConnectionManager(m)) => m,
+            _ => return,
+        };
+
+        if mgr.edit_view.is_some() {
+            // Edit view: save connection and go back to list
+            let edit_view = mgr.edit_view.as_ref().unwrap();
+            let entry = match edit_view.build_connection_entry() {
+                Some(e) => e,
+                None => return,
+            };
+
+            // If editing an existing connection, delete old alias first (handles renames)
+            if let Some(ref original_alias) = mgr.editing_original_alias
+                && original_alias != &entry.alias
+            {
+                config::delete_connection(original_alias);
+                // Update local list: remove old
+                mgr.connections.retain(|c| c.alias != *original_alias);
+            }
+
+            // Save to config
+            config::save_connection(&entry);
+
+            // Update local connections list
+            if let Some(existing) = mgr.connections.iter_mut().find(|c| c.alias == entry.alias) {
+                *existing = entry;
+            } else {
+                mgr.connections.push(entry);
+            }
+
+            // Close edit view, go back to list
+            mgr.edit_view = None;
+            mgr.editing_index = None;
+            mgr.editing_original_alias = None;
+
+            // Also sync connections back to app
+            self.connections = match &self.modal {
+                Some(Modal::ConnectionManager(m)) => m.connections.clone(),
+                _ => self.connections.clone(),
+            };
+        } else {
+            // List view: connect to selected
+            let entry = match mgr.selected_entry() {
+                Some(e) => e.clone(),
+                None => return,
+            };
+            let snmp_config = entry.to_snmp_config(self.timeout_ms, self.retries);
+            self.pending_connection_entry = Some(entry);
+            self.connect(snmp_config);
+            self.modal = None;
+        }
+    }
+
     /// Process a message and update application state.
     pub fn update(&mut self, msg: Message) {
         // Clear pending_g on any message that isn't PrefixG
@@ -853,31 +1047,44 @@ impl App {
         // Handle modal messages
         match &msg {
             Message::ModalClose => {
-                // MibInfo: Esc navigates back through layers
-                if let Some(Modal::MibInfo(m)) = &mut self.modal {
-                    if let Some(ref mut ov) = m.object_view {
-                        if ov.search_active {
-                            ov.deactivate_search();
+                match &mut self.modal {
+                    // ConnectionManager: layered Esc
+                    Some(Modal::ConnectionManager(m)) => {
+                        if m.edit_view.is_some() {
+                            m.edit_view = None;
+                            m.editing_index = None;
+                        } else if m.is_startup {
+                            self.running = false;
                         } else {
-                            m.close_object_view();
+                            self.modal = None;
                         }
-                    } else if m.search_active {
-                        m.deactivate_search();
-                    } else {
-                        self.modal = None;
+                        return;
                     }
-                    return;
+                    // MibInfo: Esc navigates back through layers
+                    Some(Modal::MibInfo(m)) => {
+                        if let Some(ref mut ov) = m.object_view {
+                            if ov.search_active {
+                                ov.deactivate_search();
+                            } else {
+                                m.close_object_view();
+                            }
+                        } else if m.search_active {
+                            m.deactivate_search();
+                        } else {
+                            self.modal = None;
+                        }
+                        return;
+                    }
+                    _ => {
+                        self.modal = None;
+                        return;
+                    }
                 }
-                self.modal = None;
-                return;
             }
             Message::ModalConfirm => {
                 match &mut self.modal {
-                    Some(Modal::Connect(m)) => {
-                        if let Some(config) = m.build_config() {
-                            self.connect(config);
-                        }
-                        self.modal = None;
+                    Some(Modal::ConnectionManager(_)) => {
+                        self.confirm_connection_manager();
                     }
                     Some(Modal::Set(_)) => self.confirm_set(),
                     Some(Modal::Search(_)) => self.confirm_search(),
@@ -900,17 +1107,34 @@ impl App {
         if self.modal.is_some() {
             match msg {
                 Message::ModalTabNext => {
-                    if let Some(Modal::Connect(m)) = &mut self.modal {
-                        m.focus_next();
+                    if let Some(Modal::ConnectionManager(mgr)) = &mut self.modal
+                        && let Some(ref mut edit) = mgr.edit_view
+                    {
+                        edit.focus_next();
                     }
                 }
                 Message::ModalTabPrev => {
-                    if let Some(Modal::Connect(m)) = &mut self.modal {
-                        m.focus_prev();
+                    if let Some(Modal::ConnectionManager(mgr)) = &mut self.modal
+                        && let Some(ref mut edit) = mgr.edit_view
+                    {
+                        edit.focus_prev();
                     }
                 }
                 Message::ModalChar(c) => match &mut self.modal {
-                    Some(Modal::Connect(m)) => m.type_char(c),
+                    Some(Modal::ConnectionManager(mgr)) => {
+                        if let Some(ref mut edit) = mgr.edit_view {
+                            edit.type_char(c);
+                        } else {
+                            match c {
+                                'j' => mgr.scroll_down(),
+                                'k' => mgr.scroll_up(),
+                                'n' => mgr.open_new(),
+                                'e' => mgr.open_edit(),
+                                'd' => mgr.delete_selected(),
+                                _ => {}
+                            }
+                        }
+                    }
                     Some(Modal::Set(m)) => m.type_char(c),
                     Some(Modal::Search(m)) => {
                         let tree = &self.oid_tree;
@@ -942,7 +1166,11 @@ impl App {
                     None => {}
                 },
                 Message::ModalBackspace => match &mut self.modal {
-                    Some(Modal::Connect(m)) => m.backspace(),
+                    Some(Modal::ConnectionManager(mgr)) => {
+                        if let Some(ref mut edit) = mgr.edit_view {
+                            edit.backspace();
+                        }
+                    }
                     Some(Modal::Set(m)) => m.backspace(),
                     Some(Modal::Search(m)) => {
                         let tree = &self.oid_tree;
@@ -959,13 +1187,15 @@ impl App {
                     }
                     None => {}
                 },
-                Message::ModalCycle => {
-                    if let Some(Modal::Connect(m)) = &mut self.modal {
-                        m.cycle_field();
-                    }
-                }
                 Message::ModalDown => match &mut self.modal {
                     Some(Modal::Search(m)) => m.select_next(),
+                    Some(Modal::ConnectionManager(mgr)) => {
+                        if let Some(ref mut edit) = mgr.edit_view {
+                            edit.arrow_down();
+                        } else {
+                            mgr.scroll_down();
+                        }
+                    }
                     Some(Modal::MibInfo(m)) => {
                         if let Some(ref mut ov) = m.object_view {
                             ov.scroll_down();
@@ -977,6 +1207,13 @@ impl App {
                 },
                 Message::ModalUp => match &mut self.modal {
                     Some(Modal::Search(m)) => m.select_prev(),
+                    Some(Modal::ConnectionManager(mgr)) => {
+                        if let Some(ref mut edit) = mgr.edit_view {
+                            edit.arrow_up();
+                        } else {
+                            mgr.scroll_up();
+                        }
+                    }
                     Some(Modal::MibInfo(m)) => {
                         if let Some(ref mut ov) = m.object_view {
                             ov.scroll_up();
@@ -1058,13 +1295,8 @@ impl App {
                 QueryStrategy::Direct => self.send_snmp_request(SnmpRequest::Get),
                 QueryStrategy::Next => self.send_snmp_request(SnmpRequest::Walk),
             },
-            Message::OpenConnectModal => {
-                self.modal = Some(Modal::Connect(ConnectModal::new(
-                    &self.connect_host,
-                    self.connect_port,
-                    &self.connect_version,
-                    &self.connect_community,
-                )));
+            Message::OpenConnectionManager => {
+                self.open_connection_manager(false);
             }
             Message::OpenSetModal => {
                 self.open_set_modal();
@@ -1074,6 +1306,12 @@ impl App {
             }
             Message::OpenMibInfoModal => {
                 self.modal = Some(Modal::MibInfo(MibInfoModal::new(&self.oid_tree)));
+            }
+            Message::CopyTreeNode => {
+                self.copy_tree_node();
+            }
+            Message::CopyDetail => {
+                self.copy_detail();
             }
             Message::CopyResult => {
                 self.copy_selected_result();
@@ -1177,6 +1415,10 @@ mod tests {
         tree
     }
 
+    fn make_test_config() -> config::AppConfig {
+        config::AppConfig::default()
+    }
+
     #[test]
     fn detail_state_scroll() {
         let mut state = DetailState::new();
@@ -1197,7 +1439,8 @@ mod tests {
     #[test]
     fn detail_state_reset_on_node_change() {
         let tree = make_test_tree();
-        let mut app = App::new(tree);
+        let config = make_test_config();
+        let mut app = App::new(tree, &config);
 
         // Expand iso to show org
         app.update(Message::TreeExpand);
@@ -1238,12 +1481,23 @@ mod tests {
             ),
             "192.168.1.1:161 v2c"
         );
+        assert_eq!(
+            format!(
+                "{}",
+                ConnectionState::Validating {
+                    host: "10.0.0.1:161".to_string(),
+                    version: "v2c".to_string()
+                }
+            ),
+            "Validating..."
+        );
     }
 
     #[test]
     fn result_entry_push() {
         let tree = make_test_tree();
-        let mut app = App::new(tree);
+        let config = make_test_config();
+        let mut app = App::new(tree, &config);
         app.connection = ConnectionState::Connected {
             host: "10.0.0.1:161".to_string(),
             version: "v2c".to_string(),
