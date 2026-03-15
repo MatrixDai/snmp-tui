@@ -622,7 +622,7 @@ fn status_line1(app: &App) -> Line<'static> {
     } else {
         Line::from(Span::styled(
             " [Tab] Switch  [c] Connect  [m] MIBs  [Ctrl+K] Clear  [/] Search  [?] Help  [q] Quit",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::Gray),
         ))
     }
 }
