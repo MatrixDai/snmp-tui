@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table};
 
 use crate::app::{App, ConnectionState, FocusedPanel, PanelSearch, ResultValue};
 use crate::modal::{Modal, TableColumnSelectModal, TableViewModal};
@@ -1679,40 +1679,38 @@ fn draw_table_view_modal(frame: &mut Frame, modal: &mut TableViewModal) {
         return;
     }
 
-    // Build column widths: "Index" + column names
-    let mut col_names = vec!["Index".to_string()];
-    for (_, name) in &modal.columns {
-        col_names.push(name.clone());
-    }
+    // "Index" column is pinned at left; only data columns scroll
+    let index_col_width = 12u16;
+    let remaining_width = inner.width.saturating_sub(index_col_width + 1);
+    let max_data_cols = ((remaining_width as usize) / 20).max(1);
 
-    // Calculate visible columns (horizontal scrolling)
-    let max_visible_cols = (inner.width as usize).saturating_sub(1) / 20; // rough estimate
-    let visible_cols_range = modal.col_scroll
-        ..std::cmp::min(modal.col_scroll + max_visible_cols.max(1), col_names.len());
+    let data_start = modal.col_scroll;
+    let data_end = (data_start + max_data_cols).min(modal.columns.len());
+    let visible_data_cols = &modal.columns[data_start..data_end];
 
-    // Build header row
-    let header_cells: Vec<String> = col_names[visible_cols_range.clone()].to_vec();
-
+    // Header: "Index" + visible data column names
     let header_style = Style::default()
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
+    let header_cells: Vec<Cell> = std::iter::once(Cell::from("Index"))
+        .chain(
+            visible_data_cols
+                .iter()
+                .map(|(_, name)| Cell::from(name.clone())),
+        )
+        .collect();
     let header = Row::new(header_cells).style(header_style);
 
-    // Build data rows
+    // Data rows: [row_idx] + values[data_start..data_end]
     let rows: Vec<Row> = modal
         .rows
         .iter()
         .enumerate()
         .map(|(idx, (row_idx, values))| {
             let mut cells = vec![row_idx.clone()];
-            for i in visible_cols_range.start..visible_cols_range.end {
-                if i > 0 && i - 1 < values.len() {
-                    cells.push(values[i - 1].clone());
-                } else {
-                    cells.push(String::new());
-                }
+            for data_col_i in data_start..data_end {
+                cells.push(values.get(data_col_i).cloned().unwrap_or_default());
             }
-
             let style = if idx == modal.selected_row {
                 Style::default().bg(Color::Cyan).fg(Color::Black)
             } else if idx % 2 == 0 {
@@ -1724,10 +1722,17 @@ fn draw_table_view_modal(frame: &mut Frame, modal: &mut TableViewModal) {
         })
         .collect();
 
-    // Calculate column widths
-    let col_count = col_names.len();
-    let col_width = (inner.width as usize) / col_count.max(1);
-    let constraints = vec![Constraint::Length(col_width as u16); col_count];
+    // Column widths: pinned Index + equal-width data columns
+    let data_col_count = data_end - data_start;
+    let data_col_width = if data_col_count > 0 {
+        remaining_width / data_col_count as u16
+    } else {
+        remaining_width
+    };
+    let mut constraints = vec![Constraint::Length(index_col_width)];
+    for _ in 0..data_col_count {
+        constraints.push(Constraint::Length(data_col_width.max(1)));
+    }
 
     let table = Table::new(rows, constraints)
         .header(header)
