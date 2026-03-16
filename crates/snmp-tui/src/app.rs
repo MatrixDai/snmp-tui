@@ -708,13 +708,12 @@ impl App {
             .unwrap_or_else(|| entry_oid.to_string());
 
         // Collect MIB columns from entry node's children
-        let mib_columns: Vec<(u32, String)> = if let Some(entry_node) = self.oid_tree.get(entry_idx) {
+        let mib_columns: Vec<(u32, String)> = if let Some(entry_node) = self.oid_tree.get(entry_idx)
+        {
             let mut cols: Vec<(u32, String)> = entry_node
                 .children
                 .iter()
-                .filter_map(|&ci| {
-                    self.oid_tree.get(ci).map(|n| (n.subid, n.name.clone()))
-                })
+                .filter_map(|&ci| self.oid_tree.get(ci).map(|n| (n.subid, n.name.clone())))
                 .collect();
             cols.sort_by_key(|&(subid, _)| subid);
             cols
@@ -737,9 +736,10 @@ impl App {
             }
         } else {
             // Show column selection modal
-            self.modal = Some(Modal::TableColumnSelect(
-                TableColumnSelectModal::new(title, mib_columns),
-            ));
+            self.modal = Some(Modal::TableColumnSelect(TableColumnSelectModal::new(
+                title,
+                mib_columns,
+            )));
         }
     }
 
@@ -1595,20 +1595,16 @@ impl App {
                         m.scroll_right();
                     }
                 }
-                Message::ModalJumpTop => {
-                    match &mut self.modal {
-                        Some(Modal::TableColumnSelect(m)) => m.jump_top(),
-                        Some(Modal::TableView(m)) => m.jump_top(),
-                        _ => {}
-                    }
-                }
-                Message::ModalJumpBottom => {
-                    match &mut self.modal {
-                        Some(Modal::TableColumnSelect(m)) => m.jump_bottom(),
-                        Some(Modal::TableView(m)) => m.jump_bottom(),
-                        _ => {}
-                    }
-                }
+                Message::ModalJumpTop => match &mut self.modal {
+                    Some(Modal::TableColumnSelect(m)) => m.jump_top(),
+                    Some(Modal::TableView(m)) => m.jump_top(),
+                    _ => {}
+                },
+                Message::ModalJumpBottom => match &mut self.modal {
+                    Some(Modal::TableColumnSelect(m)) => m.jump_bottom(),
+                    Some(Modal::TableView(m)) => m.jump_bottom(),
+                    _ => {}
+                },
                 _ => {}
             }
             return;

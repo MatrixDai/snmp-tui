@@ -707,7 +707,9 @@ fn status_line2(app: &App) -> Line<'static> {
             Modal::Set(_) => " [Tab] Next field  [Enter] Send SET  [Esc] Cancel",
             Modal::Search(_) => " [Enter] Navigate to  [Up/Down] Select  [Esc] Cancel",
             Modal::MibInfo(_) => " [j/k] Navigate  [/] Search  [Esc] Close",
-            Modal::TableColumnSelect(_) => " [j/k] Navigate  [Space] Toggle  [Enter] Confirm  [Esc] Cancel",
+            Modal::TableColumnSelect(_) => {
+                " [j/k] Navigate  [Space] Toggle  [Enter] Confirm  [Esc] Cancel"
+            }
             Modal::TableView(_) => " [j/k] Rows  [h/l] Columns  [g/G] Top/Bottom  [Esc] Close",
         };
         return Line::from(Span::styled(hints, Style::default().fg(Color::Gray)));
@@ -1550,16 +1552,16 @@ fn draw_table_column_select_modal(frame: &mut Frame, modal: &TableColumnSelectMo
         modal.checked_count(),
         modal.max_columns
     );
-    let header_line = Line::from(Span::styled(
-        header_text,
-        Style::default().fg(Color::White),
-    ));
-    frame.render_widget(Paragraph::new(header_line), ratatui::layout::Rect {
-        x: inner.x,
-        y: inner.y,
-        width: inner.width,
-        height: header_height,
-    });
+    let header_line = Line::from(Span::styled(header_text, Style::default().fg(Color::White)));
+    frame.render_widget(
+        Paragraph::new(header_line),
+        ratatui::layout::Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: header_height,
+        },
+    );
 
     // List items
     let mut list_lines: Vec<Line> = Vec::new();
@@ -1616,10 +1618,7 @@ fn draw_table_column_select_modal(frame: &mut Frame, modal: &TableColumnSelectMo
 
     let footer_text = if let Some(ref err) = modal.error {
         vec![
-            Line::from(Span::styled(
-                err.clone(),
-                Style::default().fg(Color::Red),
-            )),
+            Line::from(Span::styled(err.clone(), Style::default().fg(Color::Red))),
             Line::from(Span::styled(
                 "[j/k] Navigate  [Space] Toggle  [Enter] Confirm  [Esc] Cancel",
                 Style::default().fg(Color::Gray),
