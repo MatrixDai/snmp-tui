@@ -443,6 +443,8 @@ pub struct App {
     pub last_connection: Option<String>,
     /// Whether we are waiting for a table walk response to populate the modal.
     pub pending_table_query: bool,
+    /// Entry node index saved when table walk is launched (for response parsing).
+    pub pending_table_entry_idx: Option<mib_parser::NodeIndex>,
 }
 
 impl App {
@@ -474,6 +476,7 @@ impl App {
             connections: app_config.connections.clone(),
             last_connection: app_config.last_connection.clone(),
             pending_table_query: false,
+            pending_table_entry_idx: None,
         }
     }
 
@@ -699,18 +702,19 @@ impl App {
         // Open modal in loading state
         self.modal = Some(Modal::TableView(TableViewModal::new_loading(title)));
 
-        // Send walk request
+        // Send walk request and save entry_idx for response parsing
         if let Some(ref worker) = self.worker
             && worker.try_send(SnmpRequest::Walk(entry_oid)).is_ok()
         {
             self.inflight_op = Some(OperationType::Walk);
             self.pending_table_query = true;
+            self.pending_table_entry_idx = Some(entry_idx);
         }
     }
 
     /// Parse a walk response and populate the table view modal.
     fn handle_table_walk_response(&mut self, response: &SnmpResponse) {
-        let entry_idx = match self.tree_state.selected_node() {
+        let entry_idx = match self.pending_table_entry_idx.take() {
             Some(idx) => idx,
             None => return,
         };
@@ -797,6 +801,11 @@ impl App {
             } else {
                 // Sort by subid
                 cols.sort_by_key(|&(subid, _)| subid);
+            }
+            // Cap columns at 10 (show last 10 by subid)
+            if cols.len() > 10 {
+                let start = cols.len() - 10;
+                cols = cols.split_off(start);
             }
             cols
         };
