@@ -481,10 +481,7 @@ impl SetModal {
             .map(|s| format!("{:?}", s))
             .unwrap_or_else(|| "Unknown".to_string());
         let value_hint = Self::hint_for_syntax(syntax.as_ref());
-        let focus = match node_kind {
-            SetNodeKind::TableColumn => SetFieldFocus::Index,
-            _ => SetFieldFocus::Value,
-        };
+        let focus = SetFieldFocus::Value;
         Self {
             oid,
             name,
