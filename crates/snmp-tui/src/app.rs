@@ -802,9 +802,9 @@ impl App {
                 // Sort by subid
                 cols.sort_by_key(|&(subid, _)| subid);
             }
-            // Cap columns at 10 (show last 10 by subid)
-            if cols.len() > 10 {
-                let start = cols.len() - 10;
+            // Cap columns at 20 (show last 20 by subid)
+            if cols.len() > 20 {
+                let start = cols.len() - 20;
                 cols = cols.split_off(start);
             }
             cols
