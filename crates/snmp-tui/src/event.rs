@@ -79,8 +79,12 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
     }
 }
 
-fn handle_modal_key(key: KeyEvent, _app: &App) -> Option<Message> {
+fn handle_modal_key(key: KeyEvent, app: &App) -> Option<Message> {
+    use crate::modal::Modal;
+    let text_input = modal_accepts_text_input(app);
+
     match key.code {
+        // These always work the same regardless of modal mode
         KeyCode::Esc => Some(Message::ModalClose),
         KeyCode::Enter => Some(Message::ModalConfirm),
         KeyCode::Tab => {
@@ -92,14 +96,31 @@ fn handle_modal_key(key: KeyEvent, _app: &App) -> Option<Message> {
         }
         KeyCode::BackTab => Some(Message::ModalTabPrev),
         KeyCode::Backspace => Some(Message::ModalBackspace),
-        KeyCode::Down | KeyCode::Char('j') => Some(Message::ModalDown),
-        KeyCode::Up | KeyCode::Char('k') => Some(Message::ModalUp),
-        KeyCode::Left | KeyCode::Char('h') => Some(Message::ModalLeft),
-        KeyCode::Right | KeyCode::Char('l') => Some(Message::ModalRight),
-        KeyCode::Char('g') => Some(Message::ModalJumpTop),
-        KeyCode::Char('G') => Some(Message::ModalJumpBottom),
+
+        // Arrow keys always produce nav messages (safe for all modals)
+        KeyCode::Down => Some(Message::ModalDown),
+        KeyCode::Up => Some(Message::ModalUp),
+        KeyCode::Left => Some(Message::ModalLeft),
+        KeyCode::Right => Some(Message::ModalRight),
+
+        // j/k: navigate when NOT in text-input mode; type character otherwise
+        KeyCode::Char('j') if !text_input => Some(Message::ModalDown),
+        KeyCode::Char('k') if !text_input => Some(Message::ModalUp),
+
+        // h/l: navigate only for TableView; type character otherwise
+        KeyCode::Char('h') if matches!(app.modal, Some(Modal::TableView(_))) => {
+            Some(Message::ModalLeft)
+        }
+        KeyCode::Char('l') if matches!(app.modal, Some(Modal::TableView(_))) => {
+            Some(Message::ModalRight)
+        }
+
+        // g/G: jump nav only when NOT in text-input mode
+        KeyCode::Char('g') if !text_input => Some(Message::ModalJumpTop),
+        KeyCode::Char('G') if !text_input => Some(Message::ModalJumpBottom),
+
+        // Everything else (including j/k/g/G in text-input mode) is a typed character
         KeyCode::Char(c) => {
-            // Ctrl+Enter to confirm from any field in connect modal
             if c == '\n' || (c == 'm' && key.modifiers.contains(KeyModifiers::CONTROL)) {
                 return Some(Message::ModalConfirm);
             }
@@ -179,5 +200,30 @@ fn handle_inline_search_key(key: KeyEvent) -> Option<Message> {
         KeyCode::Backspace => Some(Message::InlineSearchBackspace),
         KeyCode::Char(c) => Some(Message::InlineSearchChar(c)),
         _ => None,
+    }
+}
+
+/// Returns true when the active modal is in a text-entry state.
+/// In that mode, printable characters (including j/k/g/G) are routed
+/// to ModalChar rather than being treated as navigation shortcuts.
+fn modal_accepts_text_input(app: &App) -> bool {
+    use crate::modal::Modal;
+    match &app.modal {
+        // Set modal: always editing a value or index field
+        Some(Modal::Set(_)) => true,
+        // Search modal: always typing into the query field
+        Some(Modal::Search(_)) => true,
+        // ConnMgr: only when the edit sub-view is open
+        Some(Modal::ConnectionManager(mgr)) => mgr.edit_view.is_some(),
+        // MibInfo: only when the search bar is active
+        Some(Modal::MibInfo(m)) => {
+            m.search_active
+                || m.object_view
+                    .as_ref()
+                    .map(|ov| ov.search_active)
+                    .unwrap_or(false)
+        }
+        // TableView and None: no text input
+        _ => false,
     }
 }
