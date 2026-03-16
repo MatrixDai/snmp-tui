@@ -92,8 +92,12 @@ fn handle_modal_key(key: KeyEvent, _app: &App) -> Option<Message> {
         }
         KeyCode::BackTab => Some(Message::ModalTabPrev),
         KeyCode::Backspace => Some(Message::ModalBackspace),
-        KeyCode::Down => Some(Message::ModalDown),
-        KeyCode::Up => Some(Message::ModalUp),
+        KeyCode::Down | KeyCode::Char('j') => Some(Message::ModalDown),
+        KeyCode::Up | KeyCode::Char('k') => Some(Message::ModalUp),
+        KeyCode::Left | KeyCode::Char('h') => Some(Message::ModalLeft),
+        KeyCode::Right | KeyCode::Char('l') => Some(Message::ModalRight),
+        KeyCode::Char('g') => Some(Message::ModalJumpTop),
+        KeyCode::Char('G') => Some(Message::ModalJumpBottom),
         KeyCode::Char(c) => {
             // Ctrl+Enter to confirm from any field in connect modal
             if c == '\n' || (c == 'm' && key.modifiers.contains(KeyModifiers::CONTROL)) {
@@ -119,6 +123,7 @@ fn handle_tree_key(key: KeyEvent) -> Option<Message> {
         KeyCode::Char(' ') => Some(Message::SnmpGet),
         KeyCode::Char('n') => Some(Message::SnmpGetNext),
         KeyCode::Char('w') => Some(Message::SnmpWalk),
+        KeyCode::Char('t') => Some(Message::SnmpTableQuery),
         KeyCode::Char('s') => Some(Message::OpenSetModal),
         KeyCode::Char('y') => Some(Message::CopyTreeNode),
         _ => None,

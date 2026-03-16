@@ -4,10 +4,10 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table};
 
 use crate::app::{App, ConnectionState, FocusedPanel, PanelSearch, ResultValue};
-use crate::modal::Modal;
+use crate::modal::{Modal, TableViewModal};
 
 /// Render the entire application UI.
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -650,6 +650,7 @@ fn status_line1(app: &App) -> Line<'static> {
             Modal::Set(_) => "SET Value",
             Modal::Search(_) => "Search MIB Objects",
             Modal::MibInfo(_) => "MIB Modules",
+            Modal::TableView(_) => "Table View",
         };
         Line::from(Span::styled(
             format!(" {}", label),
@@ -705,6 +706,7 @@ fn status_line2(app: &App) -> Line<'static> {
             Modal::Set(_) => " [Tab] Next field  [Enter] Send SET  [Esc] Cancel",
             Modal::Search(_) => " [Enter] Navigate to  [Up/Down] Select  [Esc] Cancel",
             Modal::MibInfo(_) => " [j/k] Navigate  [/] Search  [Esc] Close",
+            Modal::TableView(_) => " [j/k] Rows  [h/l] Columns  [g/G] Top/Bottom  [Esc] Close",
         };
         return Line::from(Span::styled(hints, Style::default().fg(Color::Gray)));
     }
@@ -862,6 +864,7 @@ fn draw_modal(frame: &mut Frame, app: &mut App) {
         Some(Modal::Set(m)) => draw_set_modal(frame, m),
         Some(Modal::Search(m)) => draw_search_modal(frame, m),
         Some(Modal::MibInfo(m)) => draw_mib_info_modal(frame, m),
+        Some(Modal::TableView(m)) => draw_table_view_modal(frame, m),
         None => {}
     }
 }
@@ -1466,6 +1469,7 @@ fn draw_help_overlay(frame: &mut Frame) {
         help_line("    Space", "GET selected OID", key_style, desc_style),
         help_line("    n", "GETNEXT (advancing)", key_style, desc_style),
         help_line("    w", "WALK subtree", key_style, desc_style),
+        help_line("    t", "View table (100 rows)", key_style, desc_style),
         help_line("    s", "SET value dialog", key_style, desc_style),
         help_line("    y", "Copy node name + OID", key_style, desc_style),
         Line::from(""),
@@ -1506,6 +1510,126 @@ fn draw_help_overlay(frame: &mut Frame) {
     let viewport_height = inner.height as usize;
     let visible: Vec<Line> = lines.into_iter().take(viewport_height).collect();
     frame.render_widget(Paragraph::new(visible), inner);
+}
+
+fn draw_table_view_modal(frame: &mut Frame, modal: &mut TableViewModal) {
+    let popup_area = centered_rect(90, 80, frame.area());
+
+    // Draw background
+    frame.render_widget(Clear, popup_area);
+
+    // Draw border
+    let block = Block::default()
+        .title(format!(" {} ", modal.title))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    frame.render_widget(block.clone(), popup_area);
+
+    let inner = block.inner(popup_area);
+
+    // If loading, show loading message
+    if modal.loading {
+        let loading_text = Line::from(Span::styled(
+            "  Loading table data...",
+            Style::default().fg(Color::Yellow),
+        ));
+        frame.render_widget(Paragraph::new(loading_text), inner);
+        return;
+    }
+
+    // If error, show error message
+    if let Some(ref error) = modal.error {
+        let error_text = Line::from(Span::styled(
+            format!("  Error: {}", error),
+            Style::default().fg(Color::Red),
+        ));
+        frame.render_widget(Paragraph::new(error_text), inner);
+        return;
+    }
+
+    // If no data, show empty message
+    if modal.rows.is_empty() {
+        let empty_text = Line::from(Span::styled("  No data", Style::default().fg(Color::Gray)));
+        frame.render_widget(Paragraph::new(empty_text), inner);
+        return;
+    }
+
+    // Build column widths: "Index" + column names
+    let mut col_names = vec!["Index".to_string()];
+    for (_, name) in &modal.columns {
+        col_names.push(name.clone());
+    }
+
+    // Calculate visible columns (horizontal scrolling)
+    let max_visible_cols = (inner.width as usize).saturating_sub(1) / 20; // rough estimate
+    let visible_cols_range = modal.col_scroll
+        ..std::cmp::min(modal.col_scroll + max_visible_cols.max(1), col_names.len());
+
+    // Build header row
+    let header_cells: Vec<String> = col_names[visible_cols_range.clone()].to_vec();
+
+    let header_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let header = Row::new(header_cells).style(header_style);
+
+    // Build data rows
+    let rows: Vec<Row> = modal
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(idx, (row_idx, values))| {
+            let mut cells = vec![row_idx.clone()];
+            for i in visible_cols_range.start..visible_cols_range.end {
+                if i > 0 && i - 1 < values.len() {
+                    cells.push(values[i - 1].clone());
+                } else {
+                    cells.push(String::new());
+                }
+            }
+
+            let style = if idx == modal.selected_row {
+                Style::default().bg(Color::Cyan).fg(Color::Black)
+            } else if idx % 2 == 0 {
+                Style::default().fg(Color::White)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+            Row::new(cells).style(style)
+        })
+        .collect();
+
+    // Calculate column widths
+    let col_count = col_names.len();
+    let col_width = (inner.width as usize) / col_count.max(1);
+    let constraints = vec![Constraint::Length(col_width as u16); col_count];
+
+    let table = Table::new(rows, constraints)
+        .header(header)
+        .row_highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black));
+
+    let mut table_state = modal.table_state;
+    frame.render_stateful_widget(table, inner, &mut table_state);
+
+    // Draw hint bar at the bottom
+    let hint = Line::from(vec![
+        Span::styled("[j/k] ", Style::default().fg(Color::Yellow)),
+        Span::raw("Rows "),
+        Span::styled("[h/l] ", Style::default().fg(Color::Yellow)),
+        Span::raw("Cols "),
+        Span::styled("[g/G] ", Style::default().fg(Color::Yellow)),
+        Span::raw("Top/Bottom "),
+        Span::styled("[Esc] ", Style::default().fg(Color::Yellow)),
+        Span::raw("Close"),
+    ]);
+
+    let hint_area = Rect {
+        x: popup_area.x,
+        y: popup_area.bottom().saturating_sub(1),
+        width: popup_area.width,
+        height: 1,
+    };
+    frame.render_widget(Paragraph::new(hint), hint_area);
 }
 
 fn help_line<'a>(key: &'a str, desc: &'a str, key_style: Style, desc_style: Style) -> Line<'a> {

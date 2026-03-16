@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 use crate::config::{self, ConnectionEntry};
 use crate::modal::{
-    ConnectionManagerModal, MibInfoModal, Modal, SearchModal, SetModal, SetNodeKind,
+    ConnectionManagerModal, MibInfoModal, Modal, SearchModal, SetModal, SetNodeKind, TableViewModal,
 };
 
 /// SNMP query strategy determined from MIB object metadata.
@@ -78,6 +78,7 @@ pub enum Message {
     SnmpGet,
     SnmpGetNext,
     SnmpWalk,
+    SnmpTableQuery,
 
     // Clipboard
     CopyTreeNode,
@@ -99,6 +100,10 @@ pub enum Message {
     ModalBackspace,
     ModalDown,
     ModalUp,
+    ModalLeft,
+    ModalRight,
+    ModalJumpTop,
+    ModalJumpBottom,
 
     // Inline search (Detail/Results panels)
     InlineSearchOpen,
@@ -436,6 +441,8 @@ pub struct App {
     pub connections: Vec<ConnectionEntry>,
     /// Last used connection alias.
     pub last_connection: Option<String>,
+    /// Whether we are waiting for a table walk response to populate the modal.
+    pub pending_table_query: bool,
 }
 
 impl App {
@@ -466,6 +473,7 @@ impl App {
             pending_connection_entry: None,
             connections: app_config.connections.clone(),
             last_connection: app_config.last_connection.clone(),
+            pending_table_query: false,
         }
     }
 
@@ -639,9 +647,217 @@ impl App {
         }
     }
 
+    /// Get the entry node OID if selected node is a TABLE or ENTRY.
+    /// Returns None if the node is not a table-like structure.
+    fn table_entry_node(&self) -> Option<(mib_parser::NodeIndex, mib_parser::Oid)> {
+        let selected_idx = self.tree_state.selected_node()?;
+        let node = self.oid_tree.get(selected_idx)?;
+        let selected_oid = self.oid_tree.resolve_oid(selected_idx)?;
+
+        // Case 1: Selected node is a TABLE (Syntax::Sequence) → find child ENTRY
+        if let Some(ref mib_obj) = node.mib_object
+            && let Some(mib_parser::Syntax::Sequence(_)) = &mib_obj.syntax
+        {
+            // Find the first child with index_clause (should be the ENTRY node)
+            for &child_idx in &node.children {
+                if let Some(child_node) = self.oid_tree.get(child_idx)
+                    && child_node
+                        .mib_object
+                        .as_ref()
+                        .and_then(|m| m.index_clause.as_ref())
+                        .is_some()
+                    && let Some(entry_oid) = self.oid_tree.resolve_oid(child_idx)
+                {
+                    return Some((child_idx, entry_oid));
+                }
+            }
+        }
+
+        // Case 2: Selected node is an ENTRY/ROW (has index_clause) → use directly
+        if let Some(ref mib_obj) = node.mib_object
+            && mib_obj.index_clause.is_some()
+        {
+            return Some((selected_idx, selected_oid));
+        }
+
+        None
+    }
+
+    /// Open the table view modal and send a walk request for the entry OID.
+    fn open_table_view(&mut self) {
+        if self.inflight_op.is_some() {
+            return;
+        }
+        if !matches!(self.connection, ConnectionState::Connected { .. }) {
+            return;
+        }
+
+        let (entry_idx, entry_oid) = match self.table_entry_node() {
+            Some(pair) => pair,
+            None => return,
+        };
+
+        // Get the entry node's name for the modal title
+        let title = self
+            .oid_tree
+            .get(entry_idx)
+            .map(|n| n.name.clone())
+            .unwrap_or_else(|| entry_oid.to_string());
+
+        // Open modal in loading state
+        self.modal = Some(Modal::TableView(TableViewModal::new_loading(title)));
+
+        // Send walk request
+        if let Some(ref worker) = self.worker
+            && worker.try_send(SnmpRequest::Walk(entry_oid)).is_ok()
+        {
+            self.inflight_op = Some(OperationType::Walk);
+            self.pending_table_query = true;
+        }
+    }
+
+    /// Parse a walk response and populate the table view modal.
+    fn handle_table_walk_response(&mut self, response: &SnmpResponse) {
+        let entry_idx = match self.tree_state.selected_node() {
+            Some(idx) => idx,
+            None => return,
+        };
+
+        let entry_oid = match self.oid_tree.resolve_oid(entry_idx) {
+            Some(oid) => oid,
+            None => return,
+        };
+
+        let entry_node = match self.oid_tree.get(entry_idx) {
+            Some(node) => node,
+            None => return,
+        };
+
+        // Extract walk data
+        let pairs = match &response.result {
+            snmp_client::SnmpResult::MultiValue(pairs) => pairs,
+            snmp_client::SnmpResult::Error(e) => {
+                if let Some(Modal::TableView(modal)) = &mut self.modal {
+                    modal.set_error(e.clone());
+                }
+                return;
+            }
+            _ => return,
+        };
+
+        // Parse OIDs into (row_index, col_subid, value)
+        let mut row_map: std::collections::BTreeMap<
+            String,
+            std::collections::HashMap<u32, String>,
+        > = std::collections::BTreeMap::new();
+        let mut col_subids: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+
+        for (oid, value) in pairs {
+            // Strip entry_oid prefix to get <col_subid>.<row_index...>
+            let entry_comps = entry_oid.components();
+            let oid_comps = oid.components();
+
+            if oid_comps.len() > entry_comps.len()
+                && oid_comps[..entry_comps.len()] == entry_comps[..]
+            {
+                let suffix = &oid_comps[entry_comps.len()..];
+                if !suffix.is_empty() {
+                    let col_subid = suffix[0];
+                    let row_index_parts = &suffix[1..];
+                    let row_index = row_index_parts
+                        .iter()
+                        .map(|c| c.to_string())
+                        .collect::<Vec<_>>()
+                        .join(".");
+
+                    col_subids.insert(col_subid);
+                    let value_str = value.to_string();
+                    row_map
+                        .entry(row_index)
+                        .or_default()
+                        .insert(col_subid, value_str);
+                }
+            }
+        }
+
+        // Build column metadata from MIB tree or synthesize
+        let columns: Vec<(u32, String)> = {
+            let mut cols = Vec::new();
+            // Collect children (columns) from the entry node
+            for &child_idx in &entry_node.children {
+                if let Some(col_node) = self.oid_tree.get(child_idx)
+                    && let Some(oid) = self.oid_tree.resolve_oid(child_idx)
+                {
+                    let oid_comps = oid.components();
+                    if !oid_comps.is_empty() {
+                        let subid = oid_comps[oid_comps.len() - 1];
+                        cols.push((subid, col_node.name.clone()));
+                    }
+                }
+            }
+            // If no columns found in MIB, synthesize from walk data
+            if cols.is_empty() {
+                cols = col_subids
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &subid)| (subid, format!("col{}", i + 1)))
+                    .collect();
+            } else {
+                // Sort by subid
+                cols.sort_by_key(|&(subid, _)| subid);
+            }
+            cols
+        };
+
+        // Check if we'll truncate before consuming row_map
+        let total_rows = row_map.len();
+        let will_truncate = total_rows > 100;
+
+        // Build row data
+        let rows: Vec<(String, Vec<String>)> = row_map
+            .into_iter()
+            .take(100)
+            .map(|(row_idx, value_map)| {
+                let values = columns
+                    .iter()
+                    .map(|&(subid, _)| {
+                        value_map
+                            .get(&subid)
+                            .cloned()
+                            .unwrap_or_else(|| String::from("-"))
+                    })
+                    .collect();
+                (row_idx, values)
+            })
+            .collect();
+
+        // Update title if we truncated
+        let title = if will_truncate {
+            format!(
+                "{} ({} rows, truncated at 100)",
+                entry_node.name, total_rows
+            )
+        } else {
+            entry_node.name.clone()
+        };
+
+        // Populate modal
+        if let Some(Modal::TableView(modal)) = &mut self.modal {
+            modal.title = title;
+            modal.populate(columns, rows);
+        }
+    }
+
     /// Handle an SNMP response from the background worker.
     pub fn handle_snmp_response(&mut self, response: SnmpResponse) {
         self.inflight_op = None;
+
+        // Intercept table walk responses before push_result_entry
+        if self.pending_table_query && response.operation == OperationType::Walk {
+            self.pending_table_query = false;
+            self.handle_table_walk_response(&response);
+            return;
+        }
 
         // Handle validation GET response
         if self.pending_validation
@@ -1152,6 +1368,7 @@ impl App {
                             m.open_object_view(tree);
                         }
                     }
+                    Some(Modal::TableView(_)) => {}
                     None => {}
                 }
                 return;
@@ -1169,7 +1386,9 @@ impl App {
                         }
                     }
                     Some(Modal::Set(m)) => m.focus_next(),
-                    _ => {}
+                    Some(Modal::TableView(_)) => {}
+                    Some(Modal::Search(_)) | Some(Modal::MibInfo(_)) => {}
+                    None => {}
                 },
                 Message::ModalTabPrev => match &mut self.modal {
                     Some(Modal::ConnectionManager(mgr)) => {
@@ -1178,7 +1397,9 @@ impl App {
                         }
                     }
                     Some(Modal::Set(m)) => m.focus_prev(),
-                    _ => {}
+                    Some(Modal::TableView(_)) => {}
+                    Some(Modal::Search(_)) | Some(Modal::MibInfo(_)) => {}
+                    None => {}
                 },
                 Message::ModalChar(c) => match &mut self.modal {
                     Some(Modal::ConnectionManager(mgr)) => {
@@ -1223,6 +1444,7 @@ impl App {
                             }
                         }
                     }
+                    Some(Modal::TableView(_)) => {}
                     None => {}
                 },
                 Message::ModalBackspace => match &mut self.modal {
@@ -1245,6 +1467,7 @@ impl App {
                             m.search_backspace();
                         }
                     }
+                    Some(Modal::TableView(_)) => {}
                     None => {}
                 },
                 Message::ModalDown => match &mut self.modal {
@@ -1263,6 +1486,7 @@ impl App {
                             m.scroll_down();
                         }
                     }
+                    Some(Modal::TableView(m)) => m.scroll_down(),
                     _ => {}
                 },
                 Message::ModalUp => match &mut self.modal {
@@ -1281,8 +1505,29 @@ impl App {
                             m.scroll_up();
                         }
                     }
+                    Some(Modal::TableView(m)) => m.scroll_up(),
                     _ => {}
                 },
+                Message::ModalLeft => {
+                    if let Some(Modal::TableView(m)) = &mut self.modal {
+                        m.scroll_left();
+                    }
+                }
+                Message::ModalRight => {
+                    if let Some(Modal::TableView(m)) = &mut self.modal {
+                        m.scroll_right();
+                    }
+                }
+                Message::ModalJumpTop => {
+                    if let Some(Modal::TableView(m)) = &mut self.modal {
+                        m.jump_top();
+                    }
+                }
+                Message::ModalJumpBottom => {
+                    if let Some(Modal::TableView(m)) = &mut self.modal {
+                        m.jump_bottom();
+                    }
+                }
                 _ => {}
             }
             return;
@@ -1355,6 +1600,9 @@ impl App {
                 QueryStrategy::Direct => self.send_snmp_request(SnmpRequest::Get),
                 QueryStrategy::Next => self.send_snmp_request(SnmpRequest::Walk),
             },
+            Message::SnmpTableQuery => {
+                self.open_table_view();
+            }
             Message::OpenConnectionManager => {
                 self.open_connection_manager(false);
             }

@@ -1,4 +1,5 @@
 use mib_parser::{NodeIndex, OidTree, Syntax};
+use ratatui::widgets::TableState;
 use snmp_client::SnmpValue;
 
 use crate::config::ConnectionEntry;
@@ -9,6 +10,111 @@ pub enum Modal {
     Set(SetModal),
     Search(SearchModal),
     MibInfo(MibInfoModal),
+    TableView(TableViewModal),
+}
+
+// ============================================================
+// Table View Modal
+// ============================================================
+
+pub struct TableViewModal {
+    pub title: String,
+    /// Column metadata: (subid, name)
+    pub columns: Vec<(u32, String)>,
+    /// Row data: (row_index_str, values aligned to columns)
+    pub rows: Vec<(String, Vec<String>)>,
+    /// Currently selected row index
+    pub selected_row: usize,
+    /// Horizontal scroll offset (first visible column)
+    pub col_scroll: usize,
+    /// Ratatui table state for selection
+    pub table_state: TableState,
+    /// Whether data is still loading
+    pub loading: bool,
+    /// Error message if load failed
+    pub error: Option<String>,
+}
+
+impl TableViewModal {
+    /// Create a new loading modal with the given title.
+    pub fn new_loading(title: String) -> Self {
+        let mut table_state = TableState::default();
+        table_state.select(Some(0));
+        Self {
+            title,
+            columns: Vec::new(),
+            rows: Vec::new(),
+            selected_row: 0,
+            col_scroll: 0,
+            table_state,
+            loading: true,
+            error: None,
+        }
+    }
+
+    /// Populate the modal with column and row data.
+    pub fn populate(&mut self, columns: Vec<(u32, String)>, rows: Vec<(String, Vec<String>)>) {
+        self.columns = columns;
+        self.rows = rows;
+        self.loading = false;
+        self.error = None;
+        self.selected_row = 0;
+        self.col_scroll = 0;
+        self.table_state
+            .select(if self.rows.is_empty() { None } else { Some(0) });
+    }
+
+    /// Set an error message and clear loading state.
+    pub fn set_error(&mut self, msg: String) {
+        self.loading = false;
+        self.error = Some(msg);
+        self.table_state.select(None);
+    }
+
+    /// Move selection down one row.
+    pub fn scroll_down(&mut self) {
+        if !self.rows.is_empty() && self.selected_row + 1 < self.rows.len() {
+            self.selected_row += 1;
+            self.table_state.select(Some(self.selected_row));
+        }
+    }
+
+    /// Move selection up one row.
+    pub fn scroll_up(&mut self) {
+        if self.selected_row > 0 {
+            self.selected_row -= 1;
+            self.table_state.select(Some(self.selected_row));
+        }
+    }
+
+    /// Scroll view left (columns).
+    pub fn scroll_left(&mut self) {
+        if self.col_scroll > 0 {
+            self.col_scroll -= 1;
+        }
+    }
+
+    /// Scroll view right (columns).
+    pub fn scroll_right(&mut self) {
+        if !self.columns.is_empty() && self.col_scroll + 1 < self.columns.len() {
+            self.col_scroll += 1;
+        }
+    }
+
+    /// Jump to first row.
+    pub fn jump_top(&mut self) {
+        self.selected_row = 0;
+        self.table_state
+            .select(if self.rows.is_empty() { None } else { Some(0) });
+    }
+
+    /// Jump to last row.
+    pub fn jump_bottom(&mut self) {
+        if !self.rows.is_empty() {
+            self.selected_row = self.rows.len() - 1;
+            self.table_state.select(Some(self.selected_row));
+        }
+    }
 }
 
 // ============================================================
