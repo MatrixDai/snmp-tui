@@ -493,7 +493,11 @@ impl SetModal {
             value_hint,
             syntax,
             node_kind,
-            index_input: String::new(),
+            index_input: if matches!(node_kind, SetNodeKind::TableColumn) {
+                "1".to_string()
+            } else {
+                String::new()
+            },
             focus,
         }
     }

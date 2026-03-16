@@ -82,8 +82,8 @@ fn draw_title_bar(frame: &mut Frame, area: Rect, app: &App) {
                 spans.push(Span::styled(
                     format!("  \u{2022} {}", alias),
                     Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::ITALIC),
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 ));
             }
             spans
