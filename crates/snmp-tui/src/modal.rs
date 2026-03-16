@@ -628,10 +628,15 @@ impl SetModal {
                         "false" | "0" => SnmpValue::Integer(0),
                         _ => SnmpValue::Integer(input.parse().unwrap_or(0)),
                     }
-                } else {
-                    // Most TCs are string-based (DisplayString, SnmpAdminString, etc.)
-                    // Always send as OctetString to match MIB-declared type
+                } else if Self::is_string_tc(name) {
                     SnmpValue::OctetString(input.as_bytes().to_vec())
+                } else {
+                    // Unknown TC base type — try integer, then fall back to string
+                    if let Ok(v) = input.parse::<i64>() {
+                        SnmpValue::Integer(v)
+                    } else {
+                        SnmpValue::OctetString(input.as_bytes().to_vec())
+                    }
                 }
             }
             _ => {
@@ -643,6 +648,24 @@ impl SetModal {
                 }
             }
         }
+    }
+
+    /// Check if a textual convention name is known to be string-based.
+    fn is_string_tc(name: &str) -> bool {
+        matches!(
+            name,
+            "DisplayString"
+                | "SnmpAdminString"
+                | "Utf8String"
+                | "NameString"
+                | "PhysAddress"
+                | "MacAddress"
+                | "TAddress"
+                | "DateAndTime"
+                | "InternationalDisplayString"
+                | "OwnerString"
+        ) || name.contains("String")
+            || name.contains("Address")
     }
 
     fn base_syntax(&self) -> Option<&Syntax> {
