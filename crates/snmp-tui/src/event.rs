@@ -223,6 +223,8 @@ fn modal_accepts_text_input(app: &App) -> bool {
                     .map(|ov| ov.search_active)
                     .unwrap_or(false)
         }
+        // TableColumnSelect: no text input (j/k/g/G are navigation)
+        Some(Modal::TableColumnSelect(_)) => false,
         // TableView and None: no text input
         _ => false,
     }

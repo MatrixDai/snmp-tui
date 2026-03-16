@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table};
 
 use crate::app::{App, ConnectionState, FocusedPanel, PanelSearch, ResultValue};
-use crate::modal::{Modal, TableViewModal};
+use crate::modal::{Modal, TableColumnSelectModal, TableViewModal};
 
 /// Render the entire application UI.
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -650,6 +650,7 @@ fn status_line1(app: &App) -> Line<'static> {
             Modal::Set(_) => "SET Value",
             Modal::Search(_) => "Search MIB Objects",
             Modal::MibInfo(_) => "MIB Modules",
+            Modal::TableColumnSelect(_) => "Column Select",
             Modal::TableView(_) => "Table View",
         };
         Line::from(Span::styled(
@@ -706,6 +707,7 @@ fn status_line2(app: &App) -> Line<'static> {
             Modal::Set(_) => " [Tab] Next field  [Enter] Send SET  [Esc] Cancel",
             Modal::Search(_) => " [Enter] Navigate to  [Up/Down] Select  [Esc] Cancel",
             Modal::MibInfo(_) => " [j/k] Navigate  [/] Search  [Esc] Close",
+            Modal::TableColumnSelect(_) => " [j/k] Navigate  [Space] Toggle  [Enter] Confirm  [Esc] Cancel",
             Modal::TableView(_) => " [j/k] Rows  [h/l] Columns  [g/G] Top/Bottom  [Esc] Close",
         };
         return Line::from(Span::styled(hints, Style::default().fg(Color::Gray)));
@@ -864,6 +866,7 @@ fn draw_modal(frame: &mut Frame, app: &mut App) {
         Some(Modal::Set(m)) => draw_set_modal(frame, m),
         Some(Modal::Search(m)) => draw_search_modal(frame, m),
         Some(Modal::MibInfo(m)) => draw_mib_info_modal(frame, m),
+        Some(Modal::TableColumnSelect(m)) => draw_table_column_select_modal(frame, m),
         Some(Modal::TableView(m)) => draw_table_view_modal(frame, m),
         None => {}
     }
@@ -1510,6 +1513,129 @@ fn draw_help_overlay(frame: &mut Frame) {
     let viewport_height = inner.height as usize;
     let visible: Vec<Line> = lines.into_iter().take(viewport_height).collect();
     frame.render_widget(Paragraph::new(visible), inner);
+}
+
+fn draw_table_column_select_modal(frame: &mut Frame, modal: &TableColumnSelectModal) {
+    let popup_area = centered_rect(60, 70, frame.area());
+
+    // Draw background
+    frame.render_widget(Clear, popup_area);
+
+    // Draw outer border block
+    let block = Block::default()
+        .title(format!(" {} ", modal.title))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    frame.render_widget(block, popup_area);
+
+    // Calculate inner area
+    let inner = ratatui::layout::Rect {
+        x: popup_area.x + 1,
+        y: popup_area.y + 1,
+        width: popup_area.width.saturating_sub(2),
+        height: popup_area.height.saturating_sub(2),
+    };
+
+    if inner.height < 3 {
+        return; // Too small to render
+    }
+
+    let header_height = 1;
+    let footer_height = 2;
+    let list_height = inner.height.saturating_sub(header_height + footer_height) as usize;
+
+    // Header: "Select columns to display (N/20 selected):"
+    let header_text = format!(
+        "Select columns to display ({}/{} selected):",
+        modal.checked_count(),
+        modal.max_columns
+    );
+    let header_line = Line::from(Span::styled(
+        header_text,
+        Style::default().fg(Color::White),
+    ));
+    frame.render_widget(Paragraph::new(header_line), ratatui::layout::Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: header_height,
+    });
+
+    // List items
+    let mut list_lines: Vec<Line> = Vec::new();
+    for (i, item) in modal.columns.iter().enumerate() {
+        let is_cursor = i == modal.cursor;
+        let checkbox = if item.checked { "[x]" } else { "[ ]" };
+        let checkbox_style = if item.checked {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        let cursor_marker = if is_cursor { "► " } else { "  " };
+
+        let line_style = if is_cursor {
+            Style::default().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+
+        let mut spans = vec![Span::styled(cursor_marker, line_style)];
+        spans.push(Span::styled(checkbox, checkbox_style));
+        spans.push(Span::styled(
+            format!(" {} ({})", item.name, item.subid),
+            line_style,
+        ));
+
+        list_lines.push(Line::from(spans));
+    }
+
+    // Show scrolled view of the list
+    let start_idx = modal.scroll_offset;
+    let visible_lines: Vec<Line> = list_lines
+        .into_iter()
+        .skip(start_idx)
+        .take(list_height)
+        .collect();
+
+    let list_rect = ratatui::layout::Rect {
+        x: inner.x,
+        y: inner.y + header_height,
+        width: inner.width,
+        height: list_height as u16,
+    };
+    frame.render_widget(Paragraph::new(visible_lines), list_rect);
+
+    // Error message and footer hints
+    let footer_y = inner.y + header_height + list_height as u16;
+    let footer_rect = ratatui::layout::Rect {
+        x: inner.x,
+        y: footer_y,
+        width: inner.width,
+        height: footer_height,
+    };
+
+    let footer_text = if let Some(ref err) = modal.error {
+        vec![
+            Line::from(Span::styled(
+                err.clone(),
+                Style::default().fg(Color::Red),
+            )),
+            Line::from(Span::styled(
+                "[j/k] Navigate  [Space] Toggle  [Enter] Confirm  [Esc] Cancel",
+                Style::default().fg(Color::Gray),
+            )),
+        ]
+    } else {
+        vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "[j/k] Navigate  [Space] Toggle  [Enter] Confirm  [Esc] Cancel",
+                Style::default().fg(Color::Gray),
+            )),
+        ]
+    };
+
+    frame.render_widget(Paragraph::new(footer_text), footer_rect);
 }
 
 fn draw_table_view_modal(frame: &mut Frame, modal: &mut TableViewModal) {

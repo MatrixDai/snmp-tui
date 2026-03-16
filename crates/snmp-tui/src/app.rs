@@ -6,7 +6,8 @@ use tokio::sync::mpsc;
 
 use crate::config::{self, ConnectionEntry};
 use crate::modal::{
-    ConnectionManagerModal, MibInfoModal, Modal, SearchModal, SetModal, SetNodeKind, TableViewModal,
+    ConnectionManagerModal, MibInfoModal, Modal, SearchModal, SetModal, SetNodeKind,
+    TableColumnSelectModal, TableViewModal,
 };
 
 /// SNMP query strategy determined from MIB object metadata.
@@ -445,6 +446,10 @@ pub struct App {
     pub pending_table_query: bool,
     /// Entry node index saved when table walk is launched (for response parsing).
     pub pending_table_entry_idx: Option<mib_parser::NodeIndex>,
+    /// Entry OID saved when column-select opens (used to fire Walk on confirm).
+    pub pending_table_entry_oid: Option<mib_parser::Oid>,
+    /// Columns selected by user in TableColumnSelectModal (used in walk response parsing).
+    pub pending_table_columns: Vec<(u32, String)>,
 }
 
 impl App {
@@ -477,6 +482,8 @@ impl App {
             last_connection: app_config.last_connection.clone(),
             pending_table_query: false,
             pending_table_entry_idx: None,
+            pending_table_entry_oid: None,
+            pending_table_columns: Vec::new(),
         }
     }
 
@@ -679,6 +686,8 @@ impl App {
     }
 
     /// Open the table view modal and send a walk request for the entry OID.
+    /// If the entry node has MIB children (columns), show a column selection modal first.
+    /// Otherwise, proceed directly to walk.
     fn open_table_view(&mut self) {
         if self.inflight_op.is_some() {
             return;
@@ -692,23 +701,75 @@ impl App {
             None => return,
         };
 
-        // Get the entry node's name for the modal title
         let title = self
             .oid_tree
             .get(entry_idx)
             .map(|n| n.name.clone())
             .unwrap_or_else(|| entry_oid.to_string());
 
-        // Open modal in loading state
+        // Collect MIB columns from entry node's children
+        let mib_columns: Vec<(u32, String)> = if let Some(entry_node) = self.oid_tree.get(entry_idx) {
+            let mut cols: Vec<(u32, String)> = entry_node
+                .children
+                .iter()
+                .filter_map(|&ci| {
+                    self.oid_tree.get(ci).map(|n| (n.subid, n.name.clone()))
+                })
+                .collect();
+            cols.sort_by_key(|&(subid, _)| subid);
+            cols
+        } else {
+            vec![]
+        };
+
+        // Save entry info for use when Walk is confirmed/launched
+        self.pending_table_entry_idx = Some(entry_idx);
+        self.pending_table_entry_oid = Some(entry_oid.clone());
+
+        if mib_columns.is_empty() {
+            // Fallback: no MIB metadata — skip column select, fire Walk immediately
+            self.modal = Some(Modal::TableView(TableViewModal::new_loading(title)));
+            if let Some(ref worker) = self.worker
+                && worker.try_send(SnmpRequest::Walk(entry_oid)).is_ok()
+            {
+                self.inflight_op = Some(OperationType::Walk);
+                self.pending_table_query = true;
+            }
+        } else {
+            // Show column selection modal
+            self.modal = Some(Modal::TableColumnSelect(
+                TableColumnSelectModal::new(title, mib_columns),
+            ));
+        }
+    }
+
+    /// Confirm column selection and launch the walk.
+    fn confirm_table_column_select(&mut self) {
+        let (title, selected) = if let Some(Modal::TableColumnSelect(m)) = &mut self.modal {
+            if m.checked_count() == 0 {
+                m.error = Some("Select at least one column".to_string());
+                return;
+            }
+            (m.title.clone(), m.selected_columns())
+        } else {
+            return;
+        };
+
+        let entry_oid = match self.pending_table_entry_oid.take() {
+            Some(oid) => oid,
+            None => return,
+        };
+
+        self.pending_table_columns = selected;
+
+        // Switch to loading modal
         self.modal = Some(Modal::TableView(TableViewModal::new_loading(title)));
 
-        // Send walk request and save entry_idx for response parsing
         if let Some(ref worker) = self.worker
             && worker.try_send(SnmpRequest::Walk(entry_oid)).is_ok()
         {
             self.inflight_op = Some(OperationType::Walk);
             self.pending_table_query = true;
-            self.pending_table_entry_idx = Some(entry_idx);
         }
     }
 
@@ -776,8 +837,12 @@ impl App {
             }
         }
 
-        // Build column metadata from MIB tree or synthesize
-        let columns: Vec<(u32, String)> = {
+        // Use user-selected columns (from column-select modal confirm)
+        let columns: Vec<(u32, String)> = if !self.pending_table_columns.is_empty() {
+            std::mem::take(&mut self.pending_table_columns)
+        } else {
+            // Fallback path (no column select shown — no-MIB-metadata path)
+            // Synthesize from walk data, cap at 20
             let mut cols = Vec::new();
             // Collect children (columns) from the entry node
             for &child_idx in &entry_node.children {
@@ -1369,6 +1434,7 @@ impl App {
                             m.open_object_view(tree);
                         }
                     }
+                    Some(Modal::TableColumnSelect(_)) => self.confirm_table_column_select(),
                     Some(Modal::TableView(_)) => {}
                     None => {}
                 }
@@ -1387,6 +1453,7 @@ impl App {
                         }
                     }
                     Some(Modal::Set(m)) => m.focus_next(),
+                    Some(Modal::TableColumnSelect(_)) => {}
                     Some(Modal::TableView(_)) => {}
                     Some(Modal::Search(_)) | Some(Modal::MibInfo(_)) => {}
                     None => {}
@@ -1398,6 +1465,7 @@ impl App {
                         }
                     }
                     Some(Modal::Set(m)) => m.focus_prev(),
+                    Some(Modal::TableColumnSelect(_)) => {}
                     Some(Modal::TableView(_)) => {}
                     Some(Modal::Search(_)) | Some(Modal::MibInfo(_)) => {}
                     None => {}
@@ -1445,6 +1513,11 @@ impl App {
                             }
                         }
                     }
+                    Some(Modal::TableColumnSelect(m)) => {
+                        if c == ' ' {
+                            m.toggle();
+                        }
+                    }
                     Some(Modal::TableView(_)) => {}
                     None => {}
                 },
@@ -1468,6 +1541,7 @@ impl App {
                             m.search_backspace();
                         }
                     }
+                    Some(Modal::TableColumnSelect(_)) => {}
                     Some(Modal::TableView(_)) => {}
                     None => {}
                 },
@@ -1487,6 +1561,7 @@ impl App {
                             m.scroll_down();
                         }
                     }
+                    Some(Modal::TableColumnSelect(m)) => m.scroll_down(),
                     Some(Modal::TableView(m)) => m.scroll_down(),
                     _ => {}
                 },
@@ -1506,6 +1581,7 @@ impl App {
                             m.scroll_up();
                         }
                     }
+                    Some(Modal::TableColumnSelect(m)) => m.scroll_up(),
                     Some(Modal::TableView(m)) => m.scroll_up(),
                     _ => {}
                 },
@@ -1520,13 +1596,17 @@ impl App {
                     }
                 }
                 Message::ModalJumpTop => {
-                    if let Some(Modal::TableView(m)) = &mut self.modal {
-                        m.jump_top();
+                    match &mut self.modal {
+                        Some(Modal::TableColumnSelect(m)) => m.jump_top(),
+                        Some(Modal::TableView(m)) => m.jump_top(),
+                        _ => {}
                     }
                 }
                 Message::ModalJumpBottom => {
-                    if let Some(Modal::TableView(m)) = &mut self.modal {
-                        m.jump_bottom();
+                    match &mut self.modal {
+                        Some(Modal::TableColumnSelect(m)) => m.jump_bottom(),
+                        Some(Modal::TableView(m)) => m.jump_bottom(),
+                        _ => {}
                     }
                 }
                 _ => {}

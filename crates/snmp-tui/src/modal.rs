@@ -10,7 +10,137 @@ pub enum Modal {
     Set(SetModal),
     Search(SearchModal),
     MibInfo(MibInfoModal),
+    TableColumnSelect(TableColumnSelectModal),
     TableView(TableViewModal),
+}
+
+// ============================================================
+// Table Column Select Modal
+// ============================================================
+
+pub struct ColumnItem {
+    pub subid: u32,
+    pub name: String,
+    pub checked: bool,
+}
+
+pub struct TableColumnSelectModal {
+    pub title: String,
+    pub columns: Vec<ColumnItem>,
+    pub cursor: usize,
+    pub scroll_offset: usize,
+    pub error: Option<String>,
+    pub max_columns: usize,
+}
+
+impl TableColumnSelectModal {
+    /// Create a new column selection modal with all columns from the list,
+    /// pre-checking the first 20 (sorted by subid) and leaving the rest unchecked.
+    pub fn new(title: String, columns: Vec<(u32, String)>) -> Self {
+        let items: Vec<ColumnItem> = columns
+            .into_iter()
+            .enumerate()
+            .map(|(idx, (subid, name))| ColumnItem {
+                subid,
+                name,
+                checked: idx < 20,
+            })
+            .collect();
+
+        Self {
+            title,
+            columns: items,
+            cursor: 0,
+            scroll_offset: 0,
+            error: None,
+            max_columns: 20,
+        }
+    }
+
+    /// Toggle the checked state of the item at cursor.
+    /// If trying to check when 20 already checked, set an error instead.
+    pub fn toggle(&mut self) {
+        if self.cursor >= self.columns.len() {
+            return;
+        }
+
+        if self.columns[self.cursor].checked {
+            // Unchecking is always allowed
+            self.columns[self.cursor].checked = false;
+            self.error = None;
+        } else {
+            // Checking: only if fewer than max_columns already checked
+            let count = self.columns.iter().filter(|item| item.checked).count();
+            if count < self.max_columns {
+                self.columns[self.cursor].checked = true;
+                self.error = None;
+            } else {
+                self.error = Some("Max 20 columns selected".to_string());
+            }
+        }
+    }
+
+    /// Move cursor down, updating scroll_offset to keep cursor visible.
+    pub fn scroll_down(&mut self) {
+        if !self.columns.is_empty() && self.cursor + 1 < self.columns.len() {
+            self.cursor += 1;
+            // Keep cursor visible in a reasonable window (5-line buffer from bottom)
+            let visible_height = 10; // typical visible height in modal
+            if self.scroll_offset > 0 && self.cursor >= self.scroll_offset + visible_height {
+                self.scroll_offset = self.cursor - visible_height + 1;
+            }
+            self.error = None;
+        }
+    }
+
+    /// Move cursor up, updating scroll_offset to keep cursor visible.
+    pub fn scroll_up(&mut self) {
+        if self.cursor > 0 {
+            self.cursor -= 1;
+            if self.cursor < self.scroll_offset {
+                self.scroll_offset = self.cursor;
+            }
+            self.error = None;
+        }
+    }
+
+    /// Jump to the first item.
+    pub fn jump_top(&mut self) {
+        self.cursor = 0;
+        self.scroll_offset = 0;
+        self.error = None;
+    }
+
+    /// Jump to the last item.
+    pub fn jump_bottom(&mut self) {
+        if !self.columns.is_empty() {
+            self.cursor = self.columns.len() - 1;
+            let visible_height = 10;
+            self.scroll_offset = if self.columns.len() > visible_height {
+                self.columns.len() - visible_height
+            } else {
+                0
+            };
+            self.error = None;
+        }
+    }
+
+    /// Return the number of checked items.
+    pub fn checked_count(&self) -> usize {
+        self.columns.iter().filter(|item| item.checked).count()
+    }
+
+    /// Return the checked columns as (subid, name) sorted by subid.
+    pub fn selected_columns(&self) -> Vec<(u32, String)> {
+        let mut selected: Vec<(u32, String)> = self
+            .columns
+            .iter()
+            .filter(|item| item.checked)
+            .map(|item| (item.subid, item.name.clone()))
+            .collect();
+        selected.sort_by_key(|&(subid, _)| subid);
+        selected
+    }
 }
 
 // ============================================================
