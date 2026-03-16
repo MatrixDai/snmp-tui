@@ -654,30 +654,22 @@ impl App {
         let node = self.oid_tree.get(selected_idx)?;
         let selected_oid = self.oid_tree.resolve_oid(selected_idx)?;
 
-        // Case 1: Selected node is a TABLE (Syntax::Sequence) → find child ENTRY
-        if let Some(ref mib_obj) = node.mib_object
-            && let Some(mib_parser::Syntax::Sequence(_)) = &mib_obj.syntax
-        {
-            // Find the first child with index_clause (should be the ENTRY node)
-            for &child_idx in &node.children {
-                if let Some(child_node) = self.oid_tree.get(child_idx)
-                    && child_node
-                        .mib_object
-                        .as_ref()
-                        .and_then(|m| m.index_clause.as_ref())
-                        .is_some()
-                    && let Some(entry_oid) = self.oid_tree.resolve_oid(child_idx)
-                {
-                    return Some((child_idx, entry_oid));
-                }
-            }
-        }
-
-        // Case 2: Selected node is an ENTRY/ROW (has index_clause) → use directly
+        // Case 1: Selected node is an ENTRY/ROW (has index_clause) → use directly
         if let Some(ref mib_obj) = node.mib_object
             && mib_obj.index_clause.is_some()
         {
             return Some((selected_idx, selected_oid));
+        }
+
+        // Case 2: Find any child node with index_clause (entry node)
+        for &child_idx in &node.children {
+            if let Some(child_node) = self.oid_tree.get(child_idx)
+                && let Some(child_mib) = &child_node.mib_object
+                && child_mib.index_clause.is_some()
+                && let Some(entry_oid) = self.oid_tree.resolve_oid(child_idx)
+            {
+                return Some((child_idx, entry_oid));
+            }
         }
 
         None
