@@ -618,11 +618,20 @@ impl SetModal {
                     input.split('.').filter_map(|p| p.parse().ok()).collect();
                 SnmpValue::ObjectIdentifier(mib_parser::Oid::new(components))
             }
-            Some(Syntax::TextualConvention(name)) if name == "Boolean" || name == "TruthValue" => {
-                match input.to_lowercase().as_str() {
-                    "true" | "1" => SnmpValue::Integer(1),
-                    "false" | "0" => SnmpValue::Integer(0),
-                    _ => SnmpValue::Integer(input.parse().unwrap_or(0)),
+            Some(Syntax::OctetString | Syntax::Opaque | Syntax::Bits) => {
+                SnmpValue::OctetString(input.as_bytes().to_vec())
+            }
+            Some(Syntax::TextualConvention(name)) => {
+                if name == "Boolean" || name == "TruthValue" {
+                    match input.to_lowercase().as_str() {
+                        "true" | "1" => SnmpValue::Integer(1),
+                        "false" | "0" => SnmpValue::Integer(0),
+                        _ => SnmpValue::Integer(input.parse().unwrap_or(0)),
+                    }
+                } else {
+                    // Most TCs are string-based (DisplayString, SnmpAdminString, etc.)
+                    // Always send as OctetString to match MIB-declared type
+                    SnmpValue::OctetString(input.as_bytes().to_vec())
                 }
             }
             _ => {
