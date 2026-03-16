@@ -82,8 +82,8 @@ fn draw_title_bar(frame: &mut Frame, area: Rect, app: &App) {
                 spans.push(Span::styled(
                     format!("  \u{2022} {}", alias),
                     Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::ITALIC),
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 ));
             }
             spans
@@ -1040,7 +1040,14 @@ fn draw_connection_manager_modal(
 }
 
 fn draw_set_modal(frame: &mut Frame, modal: &crate::modal::SetModal) {
-    let area = centered_rect(60, 50, frame.area());
+    use crate::modal::{SetFieldFocus, SetNodeKind};
+
+    let modal_height = if modal.node_kind == SetNodeKind::TableColumn {
+        55
+    } else {
+        50
+    };
+    let area = centered_rect(60, modal_height, frame.area());
     frame.render_widget(Clear, area);
 
     let block = Block::default()
@@ -1055,15 +1062,18 @@ fn draw_set_modal(frame: &mut Frame, modal: &crate::modal::SetModal) {
         .add_modifier(Modifier::BOLD);
     let value_style = Style::default().fg(Color::White);
     let focused_style = Style::default().fg(Color::Yellow).bg(Color::DarkGray);
+    let unfocused_style = Style::default().fg(Color::White);
     let dim_style = Style::default().fg(Color::Gray);
 
-    let oid_display = if modal.is_scalar {
-        format!("{} (will send as {}.0)", modal.oid, modal.oid)
+    // Dynamic OID display showing the effective OID
+    let effective = modal.effective_oid();
+    let oid_display = if effective != modal.oid {
+        format!("{} (will send as {})", modal.oid, effective)
     } else {
         modal.oid.clone()
     };
 
-    let lines = vec![
+    let mut lines = vec![
         Line::from(vec![
             Span::styled("  Name:    ", label_style),
             Span::styled(modal.name.clone(), value_style),
@@ -1077,17 +1087,50 @@ fn draw_set_modal(frame: &mut Frame, modal: &crate::modal::SetModal) {
             Span::styled(modal.syntax_label.clone(), value_style),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("  Value:   ", label_style),
-            Span::styled(format!("{}_", modal.value_input), focused_style),
-        ]),
-        Line::from(vec![
-            Span::styled("           ", label_style),
-            Span::styled(modal.value_hint.clone(), dim_style),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled("  [Enter] Send SET  [Esc] Cancel", dim_style)),
     ];
+
+    // Index field for table columns
+    if modal.node_kind == SetNodeKind::TableColumn {
+        let index_style = if modal.focus == SetFieldFocus::Index {
+            focused_style
+        } else {
+            unfocused_style
+        };
+        lines.push(Line::from(vec![
+            Span::styled("  Index:   ", label_style),
+            Span::styled(format!("{}_", modal.index_input), index_style),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("           ", label_style),
+            Span::styled("Row index (e.g. 1, 2, 3)", dim_style),
+        ]));
+        lines.push(Line::from(""));
+    }
+
+    // Value field
+    let val_style =
+        if modal.node_kind != SetNodeKind::TableColumn || modal.focus == SetFieldFocus::Value {
+            focused_style
+        } else {
+            unfocused_style
+        };
+    lines.push(Line::from(vec![
+        Span::styled("  Value:   ", label_style),
+        Span::styled(format!("{}_", modal.value_input), val_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("           ", label_style),
+        Span::styled(modal.value_hint.clone(), dim_style),
+    ]));
+    lines.push(Line::from(""));
+
+    // Help text
+    let help = if modal.node_kind == SetNodeKind::TableColumn {
+        "  [Tab] Switch field  [Enter] Send SET  [Esc] Cancel"
+    } else {
+        "  [Enter] Send SET  [Esc] Cancel"
+    };
+    lines.push(Line::from(Span::styled(help, dim_style)));
 
     frame.render_widget(Paragraph::new(lines), inner);
 }

@@ -438,6 +438,25 @@ impl ConnectModal {
 // SET Modal
 // ============================================================
 
+/// What kind of OID node we're setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum SetNodeKind {
+    /// Scalar OBJECT-TYPE — auto-append `.0`.
+    Scalar,
+    /// Table column — user must supply a row index.
+    TableColumn,
+    /// Anything else — use OID as-is.
+    Other,
+}
+
+/// Which field has focus in the SET modal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetFieldFocus {
+    Index,
+    Value,
+}
+
 pub struct SetModal {
     pub oid: String,
     pub name: String,
@@ -447,17 +466,22 @@ pub struct SetModal {
     pub value_hint: String,
     /// The syntax type used to construct the SnmpValue.
     syntax: Option<Syntax>,
-    /// Whether this looks like a scalar OID (auto-append .0).
-    pub is_scalar: bool,
+    /// What kind of node this is.
+    pub node_kind: SetNodeKind,
+    /// Row index input for table columns.
+    pub index_input: String,
+    /// Which field is focused (only meaningful for TableColumn).
+    pub focus: SetFieldFocus,
 }
 
 impl SetModal {
-    pub fn new(oid: String, name: String, syntax: Option<Syntax>, is_scalar: bool) -> Self {
+    pub fn new(oid: String, name: String, syntax: Option<Syntax>, node_kind: SetNodeKind) -> Self {
         let syntax_label = syntax
             .as_ref()
             .map(|s| format!("{:?}", s))
             .unwrap_or_else(|| "Unknown".to_string());
         let value_hint = Self::hint_for_syntax(syntax.as_ref());
+        let focus = SetFieldFocus::Value;
         Self {
             oid,
             name,
@@ -465,8 +489,19 @@ impl SetModal {
             value_input: String::new(),
             value_hint,
             syntax,
-            is_scalar,
+            node_kind,
+            index_input: if matches!(node_kind, SetNodeKind::TableColumn) {
+                "1".to_string()
+            } else {
+                String::new()
+            },
+            focus,
         }
+    }
+
+    /// Pre-fill the index field (e.g. from a previous GETNEXT result).
+    pub fn prefill_index(&mut self, index: &str) {
+        self.index_input = index.to_string();
     }
 
     fn hint_for_syntax(syntax: Option<&Syntax>) -> String {
@@ -503,11 +538,42 @@ impl SetModal {
     }
 
     pub fn type_char(&mut self, c: char) {
-        self.value_input.push(c);
+        match self.focus {
+            SetFieldFocus::Index => self.index_input.push(c),
+            SetFieldFocus::Value => self.value_input.push(c),
+        }
     }
 
     pub fn backspace(&mut self) {
-        self.value_input.pop();
+        match self.focus {
+            SetFieldFocus::Index => {
+                self.index_input.pop();
+            }
+            SetFieldFocus::Value => {
+                self.value_input.pop();
+            }
+        }
+    }
+
+    pub fn focus_next(&mut self) {
+        if self.node_kind == SetNodeKind::TableColumn {
+            self.focus = match self.focus {
+                SetFieldFocus::Index => SetFieldFocus::Value,
+                SetFieldFocus::Value => SetFieldFocus::Index,
+            };
+        }
+    }
+
+    pub fn focus_prev(&mut self) {
+        self.focus_next(); // only two fields, same as next
+    }
+
+    /// Whether the modal is ready to submit.
+    pub fn is_ready(&self) -> bool {
+        if self.node_kind == SetNodeKind::TableColumn && self.index_input.trim().is_empty() {
+            return false;
+        }
+        !self.value_input.trim().is_empty()
     }
 
     /// Build an SnmpValue from the input, if valid.
@@ -553,11 +619,25 @@ impl SetModal {
                     input.split('.').filter_map(|p| p.parse().ok()).collect();
                 SnmpValue::ObjectIdentifier(mib_parser::Oid::new(components))
             }
-            Some(Syntax::TextualConvention(name)) if name == "Boolean" || name == "TruthValue" => {
-                match input.to_lowercase().as_str() {
-                    "true" | "1" => SnmpValue::Integer(1),
-                    "false" | "0" => SnmpValue::Integer(0),
-                    _ => SnmpValue::Integer(input.parse().unwrap_or(0)),
+            Some(Syntax::OctetString | Syntax::Opaque | Syntax::Bits) => {
+                SnmpValue::OctetString(input.as_bytes().to_vec())
+            }
+            Some(Syntax::TextualConvention(name)) => {
+                if name == "Boolean" || name == "TruthValue" {
+                    match input.to_lowercase().as_str() {
+                        "true" | "1" => SnmpValue::Integer(1),
+                        "false" | "0" => SnmpValue::Integer(0),
+                        _ => SnmpValue::Integer(input.parse().unwrap_or(0)),
+                    }
+                } else if Self::is_string_tc(name) {
+                    SnmpValue::OctetString(input.as_bytes().to_vec())
+                } else {
+                    // Unknown TC base type — try integer, then fall back to string
+                    if let Ok(v) = input.parse::<i64>() {
+                        SnmpValue::Integer(v)
+                    } else {
+                        SnmpValue::OctetString(input.as_bytes().to_vec())
+                    }
                 }
             }
             _ => {
@@ -571,6 +651,24 @@ impl SetModal {
         }
     }
 
+    /// Check if a textual convention name is known to be string-based.
+    fn is_string_tc(name: &str) -> bool {
+        matches!(
+            name,
+            "DisplayString"
+                | "SnmpAdminString"
+                | "Utf8String"
+                | "NameString"
+                | "PhysAddress"
+                | "MacAddress"
+                | "TAddress"
+                | "DateAndTime"
+                | "InternationalDisplayString"
+                | "OwnerString"
+        ) || name.contains("String")
+            || name.contains("Address")
+    }
+
     fn base_syntax(&self) -> Option<&Syntax> {
         match &self.syntax {
             Some(Syntax::Constrained { base, .. }) => Some(base),
@@ -578,12 +676,20 @@ impl SetModal {
         }
     }
 
-    /// Return the OID to use for the SET request, appending .0 for scalars.
+    /// Return the OID to use for the SET request.
+    /// Scalar → `.0`, TableColumn → `.{index}`, Other → raw OID.
     pub fn effective_oid(&self) -> String {
-        if self.is_scalar && !self.oid.is_empty() {
-            format!("{}.0", self.oid)
-        } else {
-            self.oid.clone()
+        match self.node_kind {
+            SetNodeKind::Scalar => format!("{}.0", self.oid),
+            SetNodeKind::TableColumn => {
+                let idx = self.index_input.trim();
+                if idx.is_empty() {
+                    self.oid.clone()
+                } else {
+                    format!("{}.{}", self.oid, idx)
+                }
+            }
+            SetNodeKind::Other => self.oid.clone(),
         }
     }
 }

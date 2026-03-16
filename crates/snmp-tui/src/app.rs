@@ -5,7 +5,9 @@ use snmp_client::{OperationType, SnmpRequest, SnmpResponse, SnmpResult, SnmpWork
 use tokio::sync::mpsc;
 
 use crate::config::{self, ConnectionEntry};
-use crate::modal::{ConnectionManagerModal, MibInfoModal, Modal, SearchModal, SetModal};
+use crate::modal::{
+    ConnectionManagerModal, MibInfoModal, Modal, SearchModal, SetModal, SetNodeKind,
+};
 
 /// SNMP query strategy determined from MIB object metadata.
 enum QueryStrategy {
@@ -941,6 +943,10 @@ impl App {
             Some(n) => n,
             None => return,
         };
+        // Block SET on branch nodes — only leaf OBJECT-TYPEs make sense
+        if !node.children.is_empty() {
+            return;
+        }
         let oid = self
             .oid_tree
             .resolve_oid(node_idx)
@@ -948,9 +954,33 @@ impl App {
             .unwrap_or_default();
         let name = node.name.clone();
         let syntax = node.mib_object.as_ref().and_then(|m| m.syntax.clone());
-        // A node is scalar-ish if it has no children (leaf node)
-        let is_scalar = node.children.is_empty();
-        self.modal = Some(Modal::Set(SetModal::new(oid, name, syntax, is_scalar)));
+
+        let node_kind = if self.is_table_column(node_idx) {
+            SetNodeKind::TableColumn
+        } else {
+            SetNodeKind::Scalar
+        };
+
+        let mut modal = SetModal::new(oid.clone(), name, syntax, node_kind);
+
+        // Pre-fill index from last GETNEXT result if it matches this column's base OID
+        if node_kind == SetNodeKind::TableColumn
+            && let Some((ref base_oid, ref result_oid)) = self.last_getnext_oid
+        {
+            let base_str = base_oid.to_string();
+            if base_str == oid {
+                // The result OID is base_oid.index — extract the suffix
+                let result_str = result_oid.to_string();
+                if let Some(suffix) = result_str.strip_prefix(&base_str) {
+                    let suffix = suffix.strip_prefix('.').unwrap_or(suffix);
+                    if !suffix.is_empty() {
+                        modal.prefill_index(suffix);
+                    }
+                }
+            }
+        }
+
+        self.modal = Some(Modal::Set(modal));
     }
 
     /// Handle SET modal confirmation.
@@ -960,6 +990,9 @@ impl App {
                 Some(Modal::Set(m)) => m,
                 _ => return,
             };
+            if !set_modal.is_ready() {
+                return;
+            }
             let value = match set_modal.build_value() {
                 Some(v) => v,
                 None => return,
@@ -1129,20 +1162,24 @@ impl App {
         // Route input to modal if active
         if self.modal.is_some() {
             match msg {
-                Message::ModalTabNext => {
-                    if let Some(Modal::ConnectionManager(mgr)) = &mut self.modal
-                        && let Some(ref mut edit) = mgr.edit_view
-                    {
-                        edit.focus_next();
+                Message::ModalTabNext => match &mut self.modal {
+                    Some(Modal::ConnectionManager(mgr)) => {
+                        if let Some(ref mut edit) = mgr.edit_view {
+                            edit.focus_next();
+                        }
                     }
-                }
-                Message::ModalTabPrev => {
-                    if let Some(Modal::ConnectionManager(mgr)) = &mut self.modal
-                        && let Some(ref mut edit) = mgr.edit_view
-                    {
-                        edit.focus_prev();
+                    Some(Modal::Set(m)) => m.focus_next(),
+                    _ => {}
+                },
+                Message::ModalTabPrev => match &mut self.modal {
+                    Some(Modal::ConnectionManager(mgr)) => {
+                        if let Some(ref mut edit) = mgr.edit_view {
+                            edit.focus_prev();
+                        }
                     }
-                }
+                    Some(Modal::Set(m)) => m.focus_prev(),
+                    _ => {}
+                },
                 Message::ModalChar(c) => match &mut self.modal {
                     Some(Modal::ConnectionManager(mgr)) => {
                         if let Some(ref mut edit) = mgr.edit_view {
