@@ -753,7 +753,7 @@ fn status_line2(app: &App) -> Line<'static> {
     match app.focused {
         FocusedPanel::Tree => {
             let hints = if is_connected {
-                "[j/k] Navigate  [Enter] Expand  [r] Reset  [Space] GET  [n] GETNEXT  [w] WALK  [s] SET  [y] Copy"
+                "[j/k] Navigate  [Enter] Expand  [r] Reset  [Space] GET  [n] GETNEXT  [w] WALK  [t] Table  [s] SET  [y] Copy"
             } else {
                 "[j/k] Navigate  [Enter] Expand  [r] Reset  [y] Copy"
             };
@@ -1480,6 +1480,19 @@ fn draw_help_overlay(frame: &mut Frame) {
         help_line("    s", "SET value dialog", key_style, desc_style),
         help_line("    y", "Copy node name + OID", key_style, desc_style),
         Line::from(""),
+        Line::from(Span::styled("  Table View Modal", heading_style)),
+        help_line("    j/k or Up/Down", "Navigate rows", key_style, desc_style),
+        help_line(
+            "    h/l or Left/Right",
+            "Scroll columns",
+            key_style,
+            desc_style,
+        ),
+        help_line("    gg", "Jump to top", key_style, desc_style),
+        help_line("    G", "Jump to bottom", key_style, desc_style),
+        help_line("    r", "Refresh table data", key_style, desc_style),
+        help_line("    Esc", "Close", key_style, desc_style),
+        Line::from(""),
         Line::from(Span::styled("  Detail Panel", heading_style)),
         help_line(
             "    j/k or Up/Down",
@@ -1751,6 +1764,8 @@ fn draw_table_view_modal(frame: &mut Frame, modal: &mut TableViewModal) {
         Span::raw("Cols "),
         Span::styled("[g/G] ", Style::default().fg(Color::Yellow)),
         Span::raw("Top/Bottom "),
+        Span::styled("[r] ", Style::default().fg(Color::Yellow)),
+        Span::raw("Refresh  "),
         Span::styled("[Esc] ", Style::default().fg(Color::Yellow)),
         Span::raw("Close"),
     ]);
