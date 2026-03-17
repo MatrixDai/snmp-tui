@@ -163,11 +163,19 @@ pub struct TableViewModal {
     pub loading: bool,
     /// Error message if load failed
     pub error: Option<String>,
+    /// Entry node index for refresh
+    pub entry_idx: Option<mib_parser::NodeIndex>,
+    /// Entry OID for refresh
+    pub entry_oid: Option<mib_parser::Oid>,
 }
 
 impl TableViewModal {
-    /// Create a new loading modal with the given title.
-    pub fn new_loading(title: String) -> Self {
+    /// Create a new loading modal with the given title and entry context for refresh.
+    pub fn new_loading(
+        title: String,
+        entry_idx: Option<mib_parser::NodeIndex>,
+        entry_oid: Option<mib_parser::Oid>,
+    ) -> Self {
         let mut table_state = TableState::default();
         table_state.select(Some(0));
         Self {
@@ -179,7 +187,19 @@ impl TableViewModal {
             table_state,
             loading: true,
             error: None,
+            entry_idx,
+            entry_oid,
         }
+    }
+
+    /// Reset the modal to loading state (for refresh).
+    pub fn reset_to_loading(&mut self) {
+        self.rows.clear();
+        self.selected_row = 0;
+        self.col_scroll = 0;
+        self.loading = true;
+        self.error = None;
+        self.table_state.select(Some(0));
     }
 
     /// Populate the modal with column and row data.

@@ -710,7 +710,9 @@ fn status_line2(app: &App) -> Line<'static> {
             Modal::TableColumnSelect(_) => {
                 " [j/k] Navigate  [Space] Toggle  [Enter] Confirm  [Esc] Cancel"
             }
-            Modal::TableView(_) => " [j/k] Rows  [h/l] Columns  [g/G] Top/Bottom  [Esc] Close",
+            Modal::TableView(_) => {
+                " [j/k] Rows  [h/l] Columns  [g/G] Top/Bottom  [r] Refresh  [Esc] Close"
+            }
         };
         return Line::from(Span::styled(hints, Style::default().fg(Color::Gray)));
     }
