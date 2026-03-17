@@ -35,7 +35,7 @@ pub struct TableColumnSelectModal {
 
 impl TableColumnSelectModal {
     /// Create a new column selection modal with all columns from the list,
-    /// pre-checking the first 20 (sorted by subid) and leaving the rest unchecked.
+    /// pre-checking the first 10 (sorted by subid) and leaving the rest unchecked.
     pub fn new(title: String, columns: Vec<(u32, String)>) -> Self {
         let items: Vec<ColumnItem> = columns
             .into_iter()
@@ -43,7 +43,7 @@ impl TableColumnSelectModal {
             .map(|(idx, (subid, name))| ColumnItem {
                 subid,
                 name,
-                checked: idx < 20,
+                checked: idx < 10,
             })
             .collect();
 

@@ -726,8 +726,11 @@ impl App {
         self.pending_table_entry_idx = Some(entry_idx);
         self.pending_table_entry_oid = Some(entry_oid.clone());
 
-        if mib_columns.is_empty() {
-            // Fallback: no MIB metadata — skip column select, fire Walk immediately
+        if mib_columns.len() < 10 {
+            // Few or no columns — skip column select modal, use all available columns
+            if !mib_columns.is_empty() {
+                self.pending_table_columns = mib_columns;
+            }
             self.modal = Some(Modal::TableView(TableViewModal::new_loading(
                 title,
                 Some(entry_idx),
@@ -740,7 +743,7 @@ impl App {
                 self.pending_table_query = true;
             }
         } else {
-            // Show column selection modal
+            // Show column selection modal (>= 10 columns)
             self.modal = Some(Modal::TableColumnSelect(TableColumnSelectModal::new(
                 title,
                 mib_columns,
