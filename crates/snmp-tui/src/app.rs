@@ -760,7 +760,7 @@ impl App {
             return;
         };
 
-        let entry_idx = self.pending_table_entry_idx.take();
+        let entry_idx = self.pending_table_entry_idx;
         let entry_oid = match self.pending_table_entry_oid.take() {
             Some(oid) => oid,
             None => return,
