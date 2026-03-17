@@ -1656,6 +1656,9 @@ impl App {
                     Some(Modal::TableView(m)) => m.jump_bottom(),
                     _ => {}
                 },
+                Message::TableRefresh => {
+                    self.refresh_table_view();
+                }
                 _ => {}
             }
             return;
@@ -1730,9 +1733,6 @@ impl App {
             },
             Message::SnmpTableQuery => {
                 self.open_table_view();
-            }
-            Message::TableRefresh => {
-                self.refresh_table_view();
             }
             Message::OpenConnectionManager => {
                 self.open_connection_manager(false);
