@@ -295,12 +295,17 @@ impl SnmpSession {
     /// Perform a WALK operation — iterates through the subtree rooted at the given OID.
     /// Uses GETNEXT for v1, GETBULK for v2c/v3.
     /// Returns all (OID, value) pairs within the subtree.
+    /// Stops after 10,000 entries to prevent unbounded memory growth.
     pub fn walk(&mut self, oid: &Oid) -> Result<Vec<(Oid, SnmpValue)>, SnmpError> {
+        const MAX_WALK_ENTRIES: usize = 10_000;
         let root_components = oid.components().to_vec();
         let mut results = Vec::new();
         let mut current_oid = oid.clone();
 
         loop {
+            if results.len() >= MAX_WALK_ENTRIES {
+                break;
+            }
             if self.config.version == SnmpVersion::V1 {
                 match self.get_next(&current_oid) {
                     Ok((next_oid, value)) => {

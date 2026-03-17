@@ -1036,13 +1036,20 @@ fn draw_connection_manager_modal(
 
     // Footer hints
     let esc_hint = if modal.is_startup { "Quit" } else { "Close" };
-    lines.push(Line::from(Span::styled(
-        format!(
-            "  [j/k] Navigate  [Enter] Connect  [n] New  [e] Edit  [d] Delete  [Esc] {}",
-            esc_hint
-        ),
-        dim_style,
-    )));
+    if modal.pending_delete && !modal.connections.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  Press [d] again to confirm delete, any other key to cancel",
+            Style::default().fg(Color::Red),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "  [j/k] Navigate  [Enter] Connect  [n] New  [e] Edit  [d] Delete  [Esc] {}",
+                esc_hint
+            ),
+            dim_style,
+        )));
+    }
     lines.push(Line::from(""));
 
     lines.truncate(content_height);

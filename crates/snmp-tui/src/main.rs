@@ -28,15 +28,16 @@ fn main() -> io::Result<()> {
     // Load MIBs
     let oid_tree = load_mibs(&app_config);
 
-    // Setup terminal
-    let mut terminal = setup_terminal()?;
-
-    // Install panic hook that restores terminal before printing panic
+    // Install panic hook BEFORE terminal setup so it can restore even
+    // if setup itself panics
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
         let _ = restore_terminal();
         original_hook(panic_info);
     }));
+
+    // Setup terminal
+    let mut terminal = setup_terminal()?;
 
     // Create tokio runtime for SNMP worker
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;

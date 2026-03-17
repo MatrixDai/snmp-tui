@@ -284,6 +284,8 @@ pub struct ConnectionManagerModal {
     pub editing_original_alias: Option<String>,
     /// Whether this was opened at startup (Esc = quit) vs mid-session (Esc = close modal).
     pub is_startup: bool,
+    /// Whether a delete confirmation is pending (press 'd' twice to confirm).
+    pub pending_delete: bool,
 }
 
 impl ConnectionManagerModal {
@@ -309,6 +311,7 @@ impl ConnectionManagerModal {
             editing_index: None,
             editing_original_alias: None,
             is_startup,
+            pending_delete: false,
         }
     }
 
@@ -389,16 +392,28 @@ impl ConnectionManagerModal {
         }
     }
 
-    /// Delete the currently selected connection.
+    /// Delete the currently selected connection (requires two presses of 'd').
+    /// First press sets `pending_delete = true`, second press performs deletion.
     pub fn delete_selected(&mut self) {
-        if !self.connections.is_empty() {
+        if self.connections.is_empty() {
+            return;
+        }
+        if self.pending_delete {
             let alias = self.connections[self.selected].alias.clone();
             self.connections.remove(self.selected);
             crate::config::delete_connection(&alias);
             if self.selected >= self.connections.len() && self.selected > 0 {
                 self.selected -= 1;
             }
+            self.pending_delete = false;
+        } else {
+            self.pending_delete = true;
         }
+    }
+
+    /// Cancel pending delete when navigating away.
+    pub fn cancel_pending_delete(&mut self) {
+        self.pending_delete = false;
     }
 
     /// Get the currently selected connection entry, if any.
@@ -649,7 +664,10 @@ impl ConnectModal {
             alias
         };
 
-        let port: u16 = self.fields[2].value.trim().parse().unwrap_or(161);
+        let port: u16 = match self.fields[2].value.trim().parse() {
+            Ok(p) if p > 0 => p,
+            _ => return None, // Invalid port — refuse to build entry
+        };
         let version = self.fields[3].value.clone();
         let read_community = self.fields[4].value.clone();
         let write_community = self.fields[5].value.clone();
@@ -833,75 +851,85 @@ impl SetModal {
     }
 
     /// Build an SnmpValue from the input, if valid.
+    /// Returns None if input is empty or cannot be parsed for the expected type.
     pub fn build_value(&self) -> Option<SnmpValue> {
         let input = self.value_input.trim();
         if input.is_empty() {
             return None;
         }
-        Some(self.parse_value(input))
+        self.parse_value(input)
     }
 
-    fn parse_value(&self, input: &str) -> SnmpValue {
+    fn parse_value(&self, input: &str) -> Option<SnmpValue> {
         let base_syntax = self.base_syntax();
         match base_syntax {
             Some(Syntax::Integer | Syntax::Integer32) | Some(Syntax::IntegerEnum(_)) => {
-                // Try parsing as integer; if it fails, try matching enum label
+                // Try parsing as integer
                 if let Ok(v) = input.parse::<i64>() {
-                    return SnmpValue::Integer(v);
+                    return Some(SnmpValue::Integer(v));
                 }
+                // Try matching enum label
                 if let Some(Syntax::IntegerEnum(variants)) = &self.syntax
                     && let Some((_, val)) = variants.iter().find(|(label, _)| label == input)
                 {
-                    return SnmpValue::Integer(*val);
+                    return Some(SnmpValue::Integer(*val));
                 }
-                // Fall back to integer parse attempt
-                SnmpValue::Integer(input.parse().unwrap_or(0))
+                // Invalid integer input — return None to signal error
+                None
             }
             Some(Syntax::Counter32 | Syntax::Gauge32 | Syntax::Unsigned32) => {
-                SnmpValue::Gauge32(input.parse().unwrap_or(0))
+                input.parse().ok().map(SnmpValue::Gauge32)
             }
-            Some(Syntax::Counter64) => SnmpValue::Counter64(input.parse().unwrap_or(0)),
-            Some(Syntax::TimeTicks) => SnmpValue::TimeTicks(input.parse().unwrap_or(0)),
+            Some(Syntax::Counter64) => input.parse().ok().map(SnmpValue::Counter64),
+            Some(Syntax::TimeTicks) => input.parse().ok().map(SnmpValue::TimeTicks),
             Some(Syntax::IpAddress) => {
                 let parts: Vec<u8> = input.split('.').filter_map(|p| p.parse().ok()).collect();
                 if parts.len() == 4 {
-                    SnmpValue::IpAddress([parts[0], parts[1], parts[2], parts[3]])
+                    Some(SnmpValue::IpAddress([
+                        parts[0], parts[1], parts[2], parts[3],
+                    ]))
                 } else {
-                    SnmpValue::OctetString(input.as_bytes().to_vec())
+                    None // Invalid IP address format
                 }
             }
             Some(Syntax::ObjectIdentifier) => {
                 let components: Vec<u32> =
                     input.split('.').filter_map(|p| p.parse().ok()).collect();
-                SnmpValue::ObjectIdentifier(mib_parser::Oid::new(components))
+                if components.is_empty() {
+                    None
+                } else {
+                    Some(SnmpValue::ObjectIdentifier(mib_parser::Oid::new(
+                        components,
+                    )))
+                }
             }
             Some(Syntax::OctetString | Syntax::Opaque | Syntax::Bits) => {
-                SnmpValue::OctetString(input.as_bytes().to_vec())
+                Some(SnmpValue::OctetString(input.as_bytes().to_vec()))
             }
             Some(Syntax::TextualConvention(name)) => {
                 if name == "Boolean" || name == "TruthValue" {
                     match input.to_lowercase().as_str() {
-                        "true" | "1" => SnmpValue::Integer(1),
-                        "false" | "0" => SnmpValue::Integer(0),
-                        _ => SnmpValue::Integer(input.parse().unwrap_or(0)),
+                        "true" | "1" => Some(SnmpValue::Integer(1)),
+                        "false" | "0" => Some(SnmpValue::Integer(0)),
+                        _ => input.parse::<i64>().ok().map(SnmpValue::Integer),
                     }
                 } else if Self::is_string_tc(name) {
-                    SnmpValue::OctetString(input.as_bytes().to_vec())
+                    Some(SnmpValue::OctetString(input.as_bytes().to_vec()))
                 } else {
                     // Unknown TC base type — try integer, then fall back to string
                     if let Ok(v) = input.parse::<i64>() {
-                        SnmpValue::Integer(v)
+                        Some(SnmpValue::Integer(v))
                     } else {
-                        SnmpValue::OctetString(input.as_bytes().to_vec())
+                        Some(SnmpValue::OctetString(input.as_bytes().to_vec()))
                     }
                 }
             }
             _ => {
                 // Default: try integer, then string
                 if let Ok(v) = input.parse::<i64>() {
-                    SnmpValue::Integer(v)
+                    Some(SnmpValue::Integer(v))
                 } else {
-                    SnmpValue::OctetString(input.as_bytes().to_vec())
+                    Some(SnmpValue::OctetString(input.as_bytes().to_vec()))
                 }
             }
         }

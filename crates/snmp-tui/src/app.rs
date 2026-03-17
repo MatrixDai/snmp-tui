@@ -846,12 +846,16 @@ impl App {
         let pairs = match &response.result {
             snmp_client::SnmpResult::MultiValue(pairs) => pairs,
             snmp_client::SnmpResult::Error(e) => {
+                self.pending_table_columns.clear();
                 if let Some(Modal::TableView(modal)) = &mut self.modal {
                     modal.set_error(e.clone());
                 }
                 return;
             }
-            _ => return,
+            _ => {
+                self.pending_table_columns.clear();
+                return;
+            }
         };
 
         // Parse OIDs into (row_index, col_subid, value)
@@ -1056,12 +1060,27 @@ impl App {
                                 host,
                                 version,
                             };
-                            // Send validation GET sysDescr.0
+                            // Send validation GET sysDescr.0 to verify device is reachable
                             let sys_descr = mib_parser::Oid::new(vec![1, 3, 6, 1, 2, 1, 1, 1, 0]);
-                            if let Some(ref worker) = self.worker {
-                                let _ = worker.try_send(SnmpRequest::Get(sys_descr));
+                            if let Some(ref worker) = self.worker
+                                && worker.try_send(SnmpRequest::Get(sys_descr)).is_ok()
+                            {
                                 self.pending_validation = true;
                                 self.inflight_op = Some(OperationType::Get);
+                            } else {
+                                // Worker unavailable — fall back to connected without validation
+                                if let ConnectionState::Validating {
+                                    ref alias,
+                                    ref host,
+                                    ref version,
+                                } = self.connection
+                                {
+                                    self.connection = ConnectionState::Connected {
+                                        alias: alias.clone(),
+                                        host: host.clone(),
+                                        version: version.clone(),
+                                    };
+                                }
                             }
                         }
                     }
@@ -1530,12 +1549,17 @@ impl App {
                             edit.type_char(c);
                         } else {
                             match c {
-                                'j' => mgr.scroll_down(),
-                                'k' => mgr.scroll_up(),
-                                'n' => mgr.open_new(),
-                                'e' => mgr.open_edit(),
                                 'd' => mgr.delete_selected(),
-                                _ => {}
+                                _ => {
+                                    mgr.cancel_pending_delete();
+                                    match c {
+                                        'j' => mgr.scroll_down(),
+                                        'k' => mgr.scroll_up(),
+                                        'n' => mgr.open_new(),
+                                        'e' => mgr.open_edit(),
+                                        _ => {}
+                                    }
+                                }
                             }
                         }
                     }

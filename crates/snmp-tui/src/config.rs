@@ -247,6 +247,7 @@ pub fn delete_connection(alias: &str) {
 }
 
 /// Save config to `~/.snmp-tui/config.toml`.
+/// Uses atomic write (write to temp file + rename) to prevent corruption.
 fn save_config_file(config: &FileConfig) {
     if let Some(dir) = dirs_path() {
         if !dir.exists() {
@@ -255,7 +256,10 @@ fn save_config_file(config: &FileConfig) {
         if let Some(path) = dirs_config_path()
             && let Ok(contents) = toml::to_string_pretty(config)
         {
-            let _ = std::fs::write(path, contents);
+            let tmp_path = path.with_extension("toml.tmp");
+            if std::fs::write(&tmp_path, &contents).is_ok() {
+                let _ = std::fs::rename(&tmp_path, &path);
+            }
         }
     }
 }
