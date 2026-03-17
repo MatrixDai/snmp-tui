@@ -185,6 +185,7 @@ fn handle_results_key(key: KeyEvent, app: &App) -> Option<Message> {
         }
         KeyCode::Esc if app.results_state.search.confirmed => Some(Message::InlineSearchClose),
         KeyCode::Char('y') => Some(Message::CopyResult),
+        KeyCode::Char('e') => Some(Message::ExportResults),
         _ => None,
     }
 }

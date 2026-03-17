@@ -82,10 +82,11 @@ pub enum Message {
     SnmpTableQuery,
     TableRefresh,
 
-    // Clipboard
+    // Clipboard / Export
     CopyTreeNode,
     CopyDetail,
     CopyResult,
+    ExportResults,
 
     // Modal dialogs
     OpenConnectionManager,
@@ -451,6 +452,10 @@ pub struct App {
     pub pending_table_entry_oid: Option<mib_parser::Oid>,
     /// Columns selected by user in TableColumnSelectModal (used in walk response parsing).
     pub pending_table_columns: Vec<(u32, String)>,
+    /// Index of the current in-progress streaming walk entry in results_state.entries.
+    pub walk_in_progress_idx: Option<usize>,
+    /// Accumulated results for in-progress table walk (streaming).
+    pending_table_walk_results: Vec<(mib_parser::Oid, snmp_client::SnmpValue)>,
 }
 
 impl App {
@@ -485,6 +490,8 @@ impl App {
             pending_table_entry_idx: None,
             pending_table_entry_oid: None,
             pending_table_columns: Vec::new(),
+            walk_in_progress_idx: None,
+            pending_table_walk_results: Vec::new(),
         }
     }
 
@@ -972,11 +979,118 @@ impl App {
         }
     }
 
+    /// Append a streaming walk batch to the results panel.
+    /// Creates a new ResultEntry on first batch, extends it on subsequent ones.
+    fn append_walk_batch(
+        &mut self,
+        request_oid: &mib_parser::Oid,
+        pairs: &[(mib_parser::Oid, snmp_client::SnmpValue)],
+    ) {
+        let formatted: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(oid, val)| {
+                let name = self.oid_tree.resolve_name(oid);
+                let typed_val = format!("{}: {}", val.type_name(), val);
+                (name, typed_val)
+            })
+            .collect();
+
+        if let Some(idx) = self.walk_in_progress_idx
+            && let Some(entry) = self.results_state.entries.get_mut(idx)
+            && let ResultValue::Multiple(ref mut existing) = entry.result
+        {
+            existing.extend(formatted);
+        } else {
+            // Create new entry for this walk
+            let entry = ResultEntry {
+                operation: OperationType::Walk,
+                oid: request_oid.to_string(),
+                object_name: String::new(),
+                result: ResultValue::Multiple(formatted),
+                timestamp: SystemTime::now(),
+            };
+            self.results_state.entries.push(entry);
+            self.walk_in_progress_idx = Some(self.results_state.entries.len() - 1);
+        }
+    }
+
+    /// Finalize a streaming walk entry: apply truncation and clear in-progress tracking.
+    fn finalize_walk_entry(&mut self, total: usize) {
+        if let Some(idx) = self.walk_in_progress_idx.take()
+            && let Some(entry) = self.results_state.entries.get_mut(idx)
+            && let ResultValue::Multiple(ref mut pairs) = entry.result
+        {
+            let limit = self.max_walk_entries;
+            if pairs.len() > limit {
+                pairs.truncate(limit);
+                pairs.push((
+                    String::new(),
+                    format!("... ({} more entries truncated)", total - limit),
+                ));
+            }
+        }
+    }
+
+    /// Finalize a streaming table walk: synthesize a MultiValue response for the table handler.
+    fn finalize_table_walk(&mut self) {
+        let results = std::mem::take(&mut self.pending_table_walk_results);
+        let request_oid = self
+            .pending_table_entry_oid
+            .clone()
+            .unwrap_or_else(|| mib_parser::Oid::new(vec![]));
+        let response = SnmpResponse::multi_value(OperationType::Walk, request_oid, results);
+        self.handle_table_walk_response(&response);
+    }
+
     /// Handle an SNMP response from the background worker.
     pub fn handle_snmp_response(&mut self, response: SnmpResponse) {
-        self.inflight_op = None;
+        // Don't clear inflight for streaming walk batches — walk is still in progress
+        let is_walk_batch = matches!(response.result, SnmpResult::WalkBatch(_));
+        if !is_walk_batch {
+            self.inflight_op = None;
+        }
 
-        // Intercept table walk responses before push_result_entry
+        // Handle streaming walk responses
+        if response.operation == OperationType::Walk {
+            match &response.result {
+                SnmpResult::WalkBatch(pairs) => {
+                    if self.pending_table_query {
+                        // Accumulate for table modal
+                        self.pending_table_walk_results
+                            .extend(pairs.iter().cloned());
+                    } else {
+                        // Append to results panel incrementally
+                        self.append_walk_batch(&response.request_oid, pairs);
+                    }
+                    return;
+                }
+                SnmpResult::WalkComplete(total) => {
+                    if self.pending_table_query {
+                        self.pending_table_query = false;
+                        self.finalize_table_walk();
+                    } else {
+                        self.finalize_walk_entry(*total);
+                    }
+                    return;
+                }
+                SnmpResult::Error(_) if self.pending_table_query => {
+                    self.pending_table_query = false;
+                    self.pending_table_walk_results.clear();
+                    self.pending_table_columns.clear();
+                    // Fall through to handle_table_walk_response for error display
+                    self.handle_table_walk_response(&response);
+                    return;
+                }
+                SnmpResult::Error(_) => {
+                    // Walk error — finalize any in-progress entry, then show error
+                    self.finalize_walk_entry(0);
+                    // Fall through to push_result_entry
+                }
+                _ => {} // MultiValue from old code paths (shouldn't happen)
+            }
+        }
+
+        // Legacy: intercept table walk MultiValue responses (shouldn't fire with streaming)
         if self.pending_table_query && response.operation == OperationType::Walk {
             self.pending_table_query = false;
             self.handle_table_walk_response(&response);
@@ -1158,6 +1272,8 @@ impl App {
                 String::new(),
                 ResultValue::Error(e.clone()),
             ),
+            // WalkBatch/WalkComplete are handled in handle_snmp_response before reaching here
+            SnmpResult::WalkBatch(_) | SnmpResult::WalkComplete(_) => return,
         };
 
         let entry = ResultEntry {
@@ -1285,6 +1401,90 @@ impl App {
                 ResultValue::Error(e) => format!("{} -> {}", entry.oid, e),
             };
             self.copy_to_clipboard(&text);
+        }
+    }
+
+    /// Export all result entries to a timestamped file under ~/.snmp-tui/exports/.
+    fn export_results(&mut self) {
+        if self.results_state.entries.is_empty() {
+            self.status_message = Some((
+                "No results to export".to_string(),
+                std::time::Instant::now(),
+            ));
+            return;
+        }
+
+        let home = match std::env::var_os("HOME") {
+            Some(h) => std::path::PathBuf::from(h),
+            None => {
+                self.status_message = Some((
+                    "Export failed: HOME not set".to_string(),
+                    std::time::Instant::now(),
+                ));
+                return;
+            }
+        };
+
+        let export_dir = home.join(".snmp-tui").join("exports");
+        if let Err(e) = std::fs::create_dir_all(&export_dir) {
+            self.status_message =
+                Some((format!("Export failed: {}", e), std::time::Instant::now()));
+            return;
+        }
+
+        let ts = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let filename = format!("export_{}.txt", ts);
+        let filepath = export_dir.join(&filename);
+
+        let mut content = String::new();
+        for entry in &self.results_state.entries {
+            let entry_ts = entry
+                .timestamp
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            content.push_str(&format!(
+                "[{}] {} {}\n",
+                entry_ts, entry.operation, entry.oid
+            ));
+            if !entry.object_name.is_empty() {
+                content.push_str(&format!("  Name: {}\n", entry.object_name));
+            }
+            match &entry.result {
+                ResultValue::Single(v) => {
+                    content.push_str(&format!("  {}\n", v));
+                }
+                ResultValue::Multiple(pairs) => {
+                    for (name, val) in pairs {
+                        if name.is_empty() {
+                            content.push_str(&format!("  {}\n", val));
+                        } else {
+                            content.push_str(&format!("  {} = {}\n", name, val));
+                        }
+                    }
+                }
+                ResultValue::Error(e) => {
+                    content.push_str(&format!("  ERROR: {}\n", e));
+                }
+            }
+            content.push('\n');
+        }
+
+        match std::fs::write(&filepath, &content) {
+            Ok(()) => {
+                let count = self.results_state.entries.len();
+                self.status_message = Some((
+                    format!("Exported {} entries to ~/{}", count, filename),
+                    std::time::Instant::now(),
+                ));
+            }
+            Err(e) => {
+                self.status_message =
+                    Some((format!("Export failed: {}", e), std::time::Instant::now()));
+            }
         }
     }
 
@@ -1790,6 +1990,10 @@ impl App {
                 self.results_state.scroll_offset = 0;
                 self.results_state.total_lines = 0;
                 self.results_state.auto_scroll = true;
+                self.walk_in_progress_idx = None;
+            }
+            Message::ExportResults => {
+                self.export_results();
             }
             Message::InlineSearchOpen => match self.focused {
                 FocusedPanel::Detail => self.detail_state.search.activate(),

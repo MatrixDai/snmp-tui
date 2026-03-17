@@ -70,6 +70,10 @@ pub enum SnmpResult {
     Value(Oid, SnmpValue),
     /// Multiple (OID, value) pairs (from WALK or GETBULK).
     MultiValue(Vec<(Oid, SnmpValue)>),
+    /// A streaming batch of (OID, value) pairs from an in-progress WALK.
+    WalkBatch(Vec<(Oid, SnmpValue)>),
+    /// WALK operation completed. Contains total entry count.
+    WalkComplete(usize),
     /// Operation completed successfully with no value (e.g., SET, CONNECT).
     Ok(String),
     /// Operation failed with an error message.
@@ -113,6 +117,24 @@ impl SnmpResponse {
             operation,
             request_oid,
             result: SnmpResult::MultiValue(values),
+            timestamp: Instant::now(),
+        }
+    }
+
+    pub fn walk_batch(request_oid: Oid, values: Vec<(Oid, SnmpValue)>) -> Self {
+        Self {
+            operation: OperationType::Walk,
+            request_oid,
+            result: SnmpResult::WalkBatch(values),
+            timestamp: Instant::now(),
+        }
+    }
+
+    pub fn walk_complete(request_oid: Oid, total: usize) -> Self {
+        Self {
+            operation: OperationType::Walk,
+            request_oid,
+            result: SnmpResult::WalkComplete(total),
             timestamp: Instant::now(),
         }
     }
