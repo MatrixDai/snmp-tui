@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Interactive TUI tool for SNMP MIB exploration and device inspection.
 #[derive(Parser, Debug)]
-#[command(name = "snmp-tui", version, about)]
+#[command(name = "snmp-tui", version = env!("SNMP_TUI_VERSION"), about)]
 pub struct CliArgs {
     /// Path to additional MIB directory
     #[arg(long = "mib-dir")]

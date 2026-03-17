@@ -1,29 +1,13 @@
-name: Build
+name: Release
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
 
 jobs:
-  check:
-    name: Check & Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check
-      - run: cargo clippy -- -D warnings
-      - run: cargo test
-        env:
-          RUST_MIN_STACK: 8388608  # 8MB — snmp2 crate needs deep stack
-
   build:
     name: Build (${{ matrix.target }})
-    needs: check
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -67,8 +51,43 @@ jobs:
         env:
           BUILD_NUMBER: ${{ github.run_number }}
 
+      - name: Package artifact
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/snmp-tui dist/
+          cd dist
+          tar czf ${{ matrix.artifact }}.tar.gz snmp-tui
+          shasum -a 256 ${{ matrix.artifact }}.tar.gz > ${{ matrix.artifact }}.tar.gz.sha256
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: target/${{ matrix.target }}/release/snmp-tui
+          path: |
+            dist/${{ matrix.artifact }}.tar.gz
+            dist/${{ matrix.artifact }}.tar.gz.sha256
+
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "$TAG" \
+            --generate-notes \
+            artifacts/*.tar.gz \
+            artifacts/*.sha256
