@@ -114,6 +114,10 @@ fn handle_modal_key(key: KeyEvent, app: &App) -> Option<Message> {
         KeyCode::Char('l') if matches!(app.modal, Some(Modal::TableView(_))) => {
             Some(Message::ModalRight)
         }
+        // r: refresh table data
+        KeyCode::Char('r') if matches!(app.modal, Some(Modal::TableView(_))) => {
+            Some(Message::TableRefresh)
+        }
 
         // g/G: jump nav only when NOT in text-input mode
         KeyCode::Char('g') if !text_input => Some(Message::ModalJumpTop),

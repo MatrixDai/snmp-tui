@@ -80,6 +80,7 @@ pub enum Message {
     SnmpGetNext,
     SnmpWalk,
     SnmpTableQuery,
+    TableRefresh,
 
     // Clipboard
     CopyTreeNode,
@@ -725,9 +726,16 @@ impl App {
         self.pending_table_entry_idx = Some(entry_idx);
         self.pending_table_entry_oid = Some(entry_oid.clone());
 
-        if mib_columns.is_empty() {
-            // Fallback: no MIB metadata — skip column select, fire Walk immediately
-            self.modal = Some(Modal::TableView(TableViewModal::new_loading(title)));
+        if mib_columns.len() < 10 {
+            // Few or no columns — skip column select modal, use all available columns
+            if !mib_columns.is_empty() {
+                self.pending_table_columns = mib_columns;
+            }
+            self.modal = Some(Modal::TableView(TableViewModal::new_loading(
+                title,
+                Some(entry_idx),
+                Some(entry_oid.clone()),
+            )));
             if let Some(ref worker) = self.worker
                 && worker.try_send(SnmpRequest::Walk(entry_oid)).is_ok()
             {
@@ -735,7 +743,7 @@ impl App {
                 self.pending_table_query = true;
             }
         } else {
-            // Show column selection modal
+            // Show column selection modal (>= 10 columns)
             self.modal = Some(Modal::TableColumnSelect(TableColumnSelectModal::new(
                 title,
                 mib_columns,
@@ -755,6 +763,7 @@ impl App {
             return;
         };
 
+        let entry_idx = self.pending_table_entry_idx;
         let entry_oid = match self.pending_table_entry_oid.take() {
             Some(oid) => oid,
             None => return,
@@ -763,8 +772,51 @@ impl App {
         self.pending_table_columns = selected;
 
         // Switch to loading modal
-        self.modal = Some(Modal::TableView(TableViewModal::new_loading(title)));
+        self.modal = Some(Modal::TableView(TableViewModal::new_loading(
+            title,
+            entry_idx,
+            Some(entry_oid.clone()),
+        )));
 
+        if let Some(ref worker) = self.worker
+            && worker.try_send(SnmpRequest::Walk(entry_oid)).is_ok()
+        {
+            self.inflight_op = Some(OperationType::Walk);
+            self.pending_table_query = true;
+        }
+    }
+
+    /// Refresh the table view by re-sending the walk request.
+    fn refresh_table_view(&mut self) {
+        if self.inflight_op.is_some() {
+            return;
+        }
+        if !matches!(self.connection, ConnectionState::Connected { .. }) {
+            return;
+        }
+
+        let (entry_idx, entry_oid, columns) = if let Some(Modal::TableView(modal)) = &self.modal {
+            match (&modal.entry_idx, &modal.entry_oid) {
+                (Some(idx), Some(oid)) => (*idx, oid.clone(), modal.columns.clone()),
+                _ => return,
+            }
+        } else {
+            return;
+        };
+
+        // Restore pending state so handle_table_walk_response can use it
+        self.pending_table_entry_idx = Some(entry_idx);
+        self.pending_table_entry_oid = Some(entry_oid.clone());
+        if !columns.is_empty() {
+            self.pending_table_columns = columns;
+        }
+
+        // Reset modal to loading
+        if let Some(Modal::TableView(modal)) = &mut self.modal {
+            modal.reset_to_loading();
+        }
+
+        // Send walk request
         if let Some(ref worker) = self.worker
             && worker.try_send(SnmpRequest::Walk(entry_oid)).is_ok()
         {
@@ -907,9 +959,11 @@ impl App {
             entry_node.name.clone()
         };
 
-        // Populate modal
+        // Populate modal and persist entry context for refresh
         if let Some(Modal::TableView(modal)) = &mut self.modal {
             modal.title = title;
+            modal.entry_idx = Some(entry_idx);
+            modal.entry_oid = Some(entry_oid);
             modal.populate(columns, rows);
         }
     }
@@ -1605,6 +1659,9 @@ impl App {
                     Some(Modal::TableView(m)) => m.jump_bottom(),
                     _ => {}
                 },
+                Message::TableRefresh => {
+                    self.refresh_table_view();
+                }
                 _ => {}
             }
             return;
