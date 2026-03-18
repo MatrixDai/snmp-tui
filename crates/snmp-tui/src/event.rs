@@ -68,6 +68,8 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
             };
         }
         KeyCode::BackTab => return Some(Message::FocusPrev),
+        KeyCode::Char(']') => return Some(Message::PanelGrow),
+        KeyCode::Char('[') => return Some(Message::PanelShrink),
         _ => {}
     }
 

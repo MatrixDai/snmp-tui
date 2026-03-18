@@ -121,6 +121,10 @@ pub enum Message {
     ResultsSearchNext,
     ResultsSearchPrev,
 
+    // Panel resizing
+    PanelGrow,
+    PanelShrink,
+
     // Prefix key handling
     /// First `g` press — wait for second key
     PrefixG,
@@ -452,6 +456,10 @@ pub struct App {
     pub pending_table_entry_oid: Option<mib_parser::Oid>,
     /// Columns selected by user in TableColumnSelectModal (used in walk response parsing).
     pub pending_table_columns: Vec<(u32, String)>,
+    /// Tree panel width as percentage of total width (15–70).
+    pub tree_width_percent: u16,
+    /// Detail panel height as percentage of right-side height (15–85).
+    pub detail_height_percent: u16,
     /// Index of the current in-progress streaming walk entry in results_state.entries.
     pub walk_in_progress_idx: Option<usize>,
     /// Accumulated results for in-progress table walk (streaming).
@@ -490,6 +498,8 @@ impl App {
             pending_table_entry_idx: None,
             pending_table_entry_oid: None,
             pending_table_columns: Vec::new(),
+            tree_width_percent: 30,
+            detail_height_percent: 30,
             walk_in_progress_idx: None,
             pending_table_walk_results: Vec::new(),
         }
@@ -2053,6 +2063,28 @@ impl App {
             Message::PrefixG => {
                 self.pending_g = true;
             }
+            Message::PanelGrow => match self.focused {
+                FocusedPanel::Tree => {
+                    self.tree_width_percent = (self.tree_width_percent + 5).min(70);
+                }
+                FocusedPanel::Detail => {
+                    self.detail_height_percent = (self.detail_height_percent + 5).min(85);
+                }
+                FocusedPanel::Results => {
+                    self.detail_height_percent = self.detail_height_percent.saturating_sub(5).max(15);
+                }
+            },
+            Message::PanelShrink => match self.focused {
+                FocusedPanel::Tree => {
+                    self.tree_width_percent = self.tree_width_percent.saturating_sub(5).max(15);
+                }
+                FocusedPanel::Detail => {
+                    self.detail_height_percent = self.detail_height_percent.saturating_sub(5).max(15);
+                }
+                FocusedPanel::Results => {
+                    self.detail_height_percent = (self.detail_height_percent + 5).min(85);
+                }
+            },
             Message::Quit => {
                 self.running = false;
             }

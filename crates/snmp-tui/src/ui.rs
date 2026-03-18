@@ -115,16 +115,16 @@ fn draw_main_area(frame: &mut Frame, area: Rect, app: &mut App) {
     let horizontal = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(30), // tree
-            Constraint::Percentage(70), // right panels
+            Constraint::Percentage(app.tree_width_percent), // tree
+            Constraint::Percentage(100 - app.tree_width_percent), // right panels
         ])
         .split(area);
 
     let right_vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(30), // detail
-            Constraint::Percentage(70), // results
+            Constraint::Percentage(app.detail_height_percent), // detail
+            Constraint::Percentage(100 - app.detail_height_percent), // results
         ])
         .split(horizontal[1]);
 
@@ -1473,6 +1473,7 @@ fn draw_help_overlay(frame: &mut Frame) {
         help_line("    m", "Loaded MIB modules", key_style, desc_style),
         help_line("    Ctrl+K", "Clear results", key_style, desc_style),
         help_line("    /", "Search MIB objects", key_style, desc_style),
+        help_line("    [ / ]", "Resize focused panel", key_style, desc_style),
         help_line("    ?", "Toggle this help", key_style, desc_style),
         help_line("    q", "Quit", key_style, desc_style),
         Line::from(""),
