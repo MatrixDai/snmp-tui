@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -11,6 +12,17 @@ use crate::modal::{
     ConnectionManagerModal, MibFileEntry, MibFileStatus, MibManagerModal, MibManagerView, Modal,
     SearchModal, SetModal, SetNodeKind, TableColumnSelectModal, TableViewModal,
 };
+
+/// Append a warning message to the debug log file.
+fn debug_log_warning(msg: &str) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open("/tmp/snmp-tui-debug.log")
+    {
+        let _ = writeln!(f, "[WARN] {}", msg);
+    }
+}
 
 /// Actions dispatched from MIB Manager modal that need app-level execution.
 /// Extracted before releasing the modal borrow to avoid borrow conflicts.
@@ -460,6 +472,8 @@ pub struct App {
     pub connections: Vec<ConnectionEntry>,
     /// Last used connection alias.
     pub last_connection: Option<String>,
+    /// Debug mode — warnings are written to /tmp/snmp-tui-debug.log instead of stderr.
+    pub debug: bool,
     /// Whether we are waiting for a table walk response to populate the modal.
     pub pending_table_query: bool,
     /// Entry node index saved when table walk is launched (for response parsing).
@@ -511,6 +525,7 @@ impl App {
             pending_connection_entry: None,
             connections: app_config.connections.clone(),
             last_connection: app_config.last_connection.clone(),
+            debug: app_config.debug,
             pending_table_query: false,
             pending_table_entry_idx: None,
             pending_table_entry_oid: None,
@@ -549,7 +564,9 @@ impl App {
         let (all_modules, warnings) = mib_parser::load_mibs_tolerant(&paths);
 
         for warning in &warnings {
-            eprintln!("Warning: {}", warning);
+            if self.debug {
+                debug_log_warning(warning);
+            }
         }
 
         // Build a map from path string → error status from warning messages.
@@ -603,7 +620,9 @@ impl App {
         self.oid_tree = match mib_parser::build_tree_from_modules(&all_modules) {
             Ok(tree) => tree,
             Err(e) => {
-                eprintln!("Warning: Failed to build MIB tree: {}", e);
+                if self.debug {
+                    debug_log_warning(&format!("Failed to build MIB tree: {}", e));
+                }
                 mib_parser::OidTree::new()
             }
         };

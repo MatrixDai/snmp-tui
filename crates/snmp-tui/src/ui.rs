@@ -1346,9 +1346,11 @@ fn draw_mib_manager_modal(frame: &mut Frame, modal: &mut crate::modal::MibManage
         let count_str = entry.object_count.to_string();
         let core_tag = if entry.is_bundled { " core" } else { "" };
         let sel_prefix = if is_selected { "▸" } else { " " };
+        let seq_str = format!("{:>3}. ", vis_idx + 1);
 
-        // Layout: sel_prefix status filename   module_name   count core
-        let fixed_len = sel_prefix.len()
+        // Layout: seq sel_prefix status filename   module_name   count core
+        let fixed_len = seq_str.len()
+            + sel_prefix.len()
             + 1
             + status_icon.len()
             + 2
@@ -1360,7 +1362,8 @@ fn draw_mib_manager_modal(frame: &mut Frame, modal: &mut crate::modal::MibManage
 
         if is_selected {
             let text = format!(
-                "{}{} {}  {}{}{}  {}{}",
+                "{}{}{} {}  {}{}{}  {}{}",
+                seq_str,
                 sel_prefix,
                 status_icon,
                 filename,
@@ -1373,6 +1376,7 @@ fn draw_mib_manager_modal(frame: &mut Frame, modal: &mut crate::modal::MibManage
             lines.push(Line::from(Span::styled(text, selected_style)));
         } else {
             lines.push(Line::from(vec![
+                Span::styled(seq_str, dim_style),
                 Span::styled(sel_prefix.to_string(), name_style),
                 Span::styled(status_icon.to_string(), status_sty),
                 Span::raw(" "),
@@ -1541,15 +1545,16 @@ fn draw_object_list_view(frame: &mut Frame, ov: &mut crate::modal::ObjectListVie
         let (ref name, ref oid) = ov.objects[*obj_idx];
         let is_selected = *vis_idx == ov.selected;
 
-        let used = 2 + name.len() + 2 + oid.len();
+        let seq_str = format!("{:>4}. ", vis_idx + 1);
+        let used = seq_str.len() + name.len() + 2 + oid.len();
         let padding = col_width.saturating_sub(used);
 
         if is_selected {
-            let text = format!("  {}{}  {}", name, " ".repeat(padding), oid);
+            let text = format!("{}{}{}  {}", seq_str, name, " ".repeat(padding), oid);
             lines.push(Line::from(Span::styled(text, selected_style)));
         } else {
             lines.push(Line::from(vec![
-                Span::styled("  ", name_style),
+                Span::styled(seq_str, dim_style),
                 Span::styled(name.clone(), name_style),
                 Span::styled(" ".repeat(padding + 2), name_style),
                 Span::styled(oid.clone(), oid_style),
