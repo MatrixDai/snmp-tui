@@ -1,8 +1,9 @@
 name: Auto Tag
 
-on:
-  push:
-    branches: [main]
+# DISABLED: Workflow triggers commented out
+# on:
+#   push:
+#     branches: [main]
 
 jobs:
   tag:
