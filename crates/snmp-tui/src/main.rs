@@ -229,31 +229,6 @@ fn load_mibs(config: &config::AppConfig) -> (mib_parser::OidTree, Vec<MibFileEnt
         entry.1 += module.objects.len();
     }
 
-    // Module-name dedup: if every module in a file was already seen in an
-    // earlier file, that file is a copy/duplicate — skip it.
-    let mut seen_modules: HashSet<String> = HashSet::new();
-    let mut duplicate_paths: HashSet<String> = HashSet::new();
-    for (path, _) in &path_infos {
-        let path_str = path.display().to_string();
-        if let Some((modules, _)) = path_modules.get(&path_str) {
-            let all_seen = !modules.is_empty() && modules.iter().all(|m| seen_modules.contains(m));
-            if all_seen {
-                duplicate_paths.insert(path_str.clone());
-                if config.debug {
-                    debug_log_warning(&format!("Skipping duplicate MIB: {}", path_str));
-                }
-            } else {
-                for m in modules {
-                    seen_modules.insert(m.clone());
-                }
-            }
-        }
-    }
-    let path_infos: Vec<(PathBuf, bool)> = path_infos
-        .into_iter()
-        .filter(|(p, _)| !duplicate_paths.contains(&p.display().to_string()))
-        .collect();
-
     // Build MibFileEntry list.
     let mib_file_entries: Vec<MibFileEntry> = path_infos
         .iter()

@@ -602,30 +602,6 @@ impl App {
             entry.1 += module.objects.len();
         }
 
-        // Module-name dedup: remove files whose modules were all already seen
-        // by an earlier file in the list (content-identical copies).
-        let mut seen_modules: HashSet<String> = HashSet::new();
-        let mut duplicate_paths: HashSet<String> = HashSet::new();
-        for entry in &self.mib_files {
-            let path_str = entry.path.display().to_string();
-            if let Some((modules, _)) = path_modules.get(&path_str) {
-                let all_seen =
-                    !modules.is_empty() && modules.iter().all(|m| seen_modules.contains(m));
-                if all_seen {
-                    duplicate_paths.insert(path_str.clone());
-                    if self.debug {
-                        debug_log_warning(&format!("Skipping duplicate MIB: {}", path_str));
-                    }
-                } else {
-                    for m in modules {
-                        seen_modules.insert(m.clone());
-                    }
-                }
-            }
-        }
-        self.mib_files
-            .retain(|e| !duplicate_paths.contains(&e.path.display().to_string()));
-
         // Update MibFileEntry statuses.
         for entry in &mut self.mib_files {
             let path_str = entry.path.display().to_string();
