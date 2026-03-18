@@ -649,7 +649,7 @@ fn status_line1(app: &App) -> Line<'static> {
             }
             Modal::Set(_) => "SET Value",
             Modal::Search(_) => "Search MIB Objects",
-            Modal::MibInfo(_) => "MIB Modules",
+            Modal::MibManager(_) => "MIB Manager",
             Modal::TableColumnSelect(_) => "Column Select",
             Modal::TableView(_) => "Table View",
         };
@@ -724,7 +724,9 @@ fn status_line2(app: &App) -> Line<'static> {
             }
             Modal::Set(_) => " [Tab] Next field  [Enter] Send SET  [Esc] Cancel",
             Modal::Search(_) => " [Enter] Navigate to  [Up/Down] Select  [Esc] Cancel",
-            Modal::MibInfo(_) => " [j/k] Navigate  [/] Search  [Esc] Close",
+            Modal::MibManager(_) => {
+                " [j/k] Nav  [Enter] View  [r] Reload  [R] All  [u] Unload  [a] Add  [/] Search  [Esc] Close"
+            }
             Modal::TableColumnSelect(_) => {
                 " [j/k] Navigate  [Space] Toggle  [Enter] Confirm  [Esc] Cancel"
             }
@@ -887,7 +889,7 @@ fn draw_modal(frame: &mut Frame, app: &mut App) {
         Some(Modal::ConnectionManager(m)) => draw_connection_manager_modal(frame, m),
         Some(Modal::Set(m)) => draw_set_modal(frame, m),
         Some(Modal::Search(m)) => draw_search_modal(frame, m),
-        Some(Modal::MibInfo(m)) => draw_mib_info_modal(frame, m),
+        Some(Modal::MibManager(m)) => draw_mib_manager_modal(frame, m),
         Some(Modal::TableColumnSelect(m)) => draw_table_column_select_modal(frame, m),
         Some(Modal::TableView(m)) => draw_table_view_modal(frame, m),
         None => {}
@@ -1246,51 +1248,70 @@ fn draw_search_modal(frame: &mut Frame, modal: &crate::modal::SearchModal) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-fn draw_mib_info_modal(frame: &mut Frame, modal: &mut crate::modal::MibInfoModal) {
-    if let Some(ref mut ov) = modal.object_view {
-        draw_object_list_view(frame, ov);
-        return;
+fn draw_mib_manager_modal(frame: &mut Frame, modal: &mut crate::modal::MibManagerModal) {
+    use crate::modal::MibManagerView;
+
+    match modal.view {
+        MibManagerView::ObjectList => {
+            if let Some(ref mut ov) = modal.object_view {
+                draw_object_list_view(frame, ov);
+            }
+            return;
+        }
+        MibManagerView::LoadInput => {
+            draw_mib_load_input(frame, modal);
+            return;
+        }
+        MibManagerView::ConfirmUnload => {
+            draw_mib_confirm_unload(frame, modal);
+            return;
+        }
+        MibManagerView::FileList => {}
     }
 
-    let area = centered_rect(60, 70, frame.area());
+    // ── FileList view ────────────────────────────────────────────────────────
+    let total_objects: usize = modal.files.iter().map(|e| e.object_count).sum();
+    let area = centered_rect(70, 78, frame.area());
     frame.render_widget(Clear, area);
 
+    let title = format!(
+        " MIB Manager ({} files, {} objects) ",
+        modal.files.len(),
+        total_objects
+    );
     let block = Block::default()
-        .title(" Loaded MIB Modules ")
+        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let heading_style = Style::default()
-        .fg(Color::Cyan)
-        .add_modifier(Modifier::BOLD);
+    let dim_style = Style::default().fg(Color::Gray);
+    let selected_style = Style::default().fg(Color::Black).bg(Color::Cyan);
+    let ok_style = Style::default().fg(Color::Green);
+    let err_style = Style::default().fg(Color::Yellow);
+    let core_style = Style::default().fg(Color::Cyan);
     let name_style = Style::default().fg(Color::White);
     let count_style = Style::default().fg(Color::Yellow);
     let file_style = Style::default().fg(Color::Gray);
-    let dim_style = Style::default().fg(Color::Gray);
-    let selected_style = Style::default().fg(Color::Black).bg(Color::Cyan);
+    let feedback_ok = Style::default()
+        .fg(Color::Green)
+        .add_modifier(Modifier::BOLD);
+    let feedback_err = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
 
     let content_height = inner.height as usize;
-    let header_lines = 2;
     let search_lines = if modal.search_active { 1 } else { 0 };
-    let footer_lines = 1 + search_lines;
-    let list_height = content_height.saturating_sub(header_lines + footer_lines);
+    let feedback_lines = if modal.feedback_message.is_some() {
+        1
+    } else {
+        0
+    };
+    let footer_lines = 2 + search_lines + feedback_lines; // hint line + blank separator + optional
+    let list_height = content_height.saturating_sub(footer_lines);
     modal.viewport_height = list_height;
 
-    let mut lines = vec![
-        Line::from(Span::styled(
-            format!(
-                "  {} modules, {} objects total",
-                modal.filtered.len(),
-                modal.total_objects
-            ),
-            heading_style,
-        )),
-        Line::from(""),
-    ];
-
-    let col_width = (inner.width as usize).saturating_sub(4);
+    let col_width = (inner.width as usize).saturating_sub(2);
+    let mut lines: Vec<Line> = Vec::new();
 
     let visible: Vec<(usize, usize)> = modal
         .filtered
@@ -1298,41 +1319,69 @@ fn draw_mib_info_modal(frame: &mut Frame, modal: &mut crate::modal::MibInfoModal
         .enumerate()
         .skip(modal.scroll_offset)
         .take(list_height)
-        .map(|(vis_idx, &mod_idx)| (vis_idx, mod_idx))
+        .map(|(vis_idx, &file_idx)| (vis_idx, file_idx))
         .collect();
 
-    for (vis_idx, mod_idx) in &visible {
-        let (ref name, count, ref file) = modal.modules[*mod_idx];
-        let is_selected = *vis_idx == modal.selected;
+    for (vis_idx, file_idx) in &visible {
+        let entry = &modal.files[*file_idx];
+        let is_selected = (vis_idx + modal.scroll_offset) == modal.selected;
 
-        // Extract just the filename
-        let filename = std::path::Path::new(file)
+        let filename = entry
+            .path
             .file_name()
             .and_then(|f| f.to_str())
             .unwrap_or("");
 
-        let count_str = format!("{}", count);
-        let prefix = if is_selected { "▸ " } else { "  " };
-        let used = prefix.len() + name.len() + 2 + filename.len() + 2 + count_str.len();
-        let padding = col_width.saturating_sub(used);
+        let (status_icon, status_sty) = match &entry.status {
+            crate::modal::MibFileStatus::Loaded => ("✓", ok_style),
+            _ => ("✗", err_style),
+        };
+
+        let module_name = match entry.modules.len() {
+            0 => "—".to_string(),
+            1 => entry.modules[0].clone(),
+            _ => format!("{}..", entry.modules[0]),
+        };
+
+        let count_str = entry.object_count.to_string();
+        let core_tag = if entry.is_bundled { " core" } else { "" };
+        let sel_prefix = if is_selected { "▸" } else { " " };
+
+        // Layout: sel_prefix status filename   module_name   count core
+        let fixed_len = sel_prefix.len()
+            + 1
+            + status_icon.len()
+            + 2
+            + filename.len()
+            + 2
+            + count_str.len()
+            + core_tag.len();
+        let padding = col_width.saturating_sub(fixed_len + module_name.len());
 
         if is_selected {
             let text = format!(
-                "{}{}{}{}  {}",
-                prefix,
-                name,
-                " ".repeat(padding + 2),
+                "{}{} {}  {}{}{}  {}{}",
+                sel_prefix,
+                status_icon,
                 filename,
+                module_name,
+                " ".repeat(padding),
                 count_str,
+                core_tag,
+                "",
             );
             lines.push(Line::from(Span::styled(text, selected_style)));
         } else {
             lines.push(Line::from(vec![
-                Span::styled(prefix, name_style),
-                Span::styled(name.clone(), name_style),
-                Span::styled(" ".repeat(padding + 2), name_style),
+                Span::styled(sel_prefix.to_string(), name_style),
+                Span::styled(status_icon.to_string(), status_sty),
+                Span::raw(" "),
                 Span::styled(filename.to_string(), file_style),
-                Span::styled(format!("  {}", count_str), count_style),
+                Span::raw("  "),
+                Span::styled(module_name, name_style),
+                Span::raw(" ".repeat(padding)),
+                Span::styled(count_str, count_style),
+                Span::styled(core_tag.to_string(), core_style),
             ]));
         }
     }
@@ -1344,24 +1393,112 @@ fn draw_mib_info_modal(frame: &mut Frame, modal: &mut crate::modal::MibInfoModal
         lines.push(Line::from(""));
     }
 
-    // Footer hint
-    let hint = "  [j/k] Navigate  [Enter] View  [/] Search  [Esc] Close";
-    lines.push(Line::from(Span::styled(hint, dim_style)));
+    // Feedback message
+    if let Some((ref msg, is_error)) = modal.feedback_message {
+        let sty = if is_error { feedback_err } else { feedback_ok };
+        lines.push(Line::from(Span::styled(format!("  {}", msg), sty)));
+    }
+
+    // Footer hint (two lines)
+    lines.push(Line::from(Span::styled(
+        "  [j/k] Nav [Enter] View [r] Reload [R] All [u] Unload [a] Add",
+        dim_style,
+    )));
+    lines.push(Line::from(Span::styled(
+        "  [/] Search  [Esc] Close",
+        dim_style,
+    )));
 
     // Search bar
     if modal.search_active {
-        let search_line = Line::from(vec![
+        lines.push(Line::from(vec![
             Span::styled("  /", Style::default().fg(Color::Yellow)),
             Span::styled(
                 modal.search_query.clone(),
                 Style::default().fg(Color::White),
             ),
             Span::styled("_", Style::default().fg(Color::Yellow)),
-        ]);
-        lines.push(search_line);
+        ]));
     }
 
     lines.truncate(content_height);
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn draw_mib_load_input(frame: &mut Frame, modal: &crate::modal::MibManagerModal) {
+    let area = centered_rect(60, 20, frame.area());
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(" Add MIB Path ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Enter file or directory path:",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  > ", Style::default().fg(Color::Yellow)),
+            Span::styled(modal.load_input.clone(), Style::default().fg(Color::White)),
+            Span::styled("_", Style::default().fg(Color::Yellow)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  [Enter] Load  [Esc] Cancel",
+            Style::default().fg(Color::Gray),
+        )),
+    ];
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn draw_mib_confirm_unload(frame: &mut Frame, modal: &crate::modal::MibManagerModal) {
+    let area = centered_rect(50, 25, frame.area());
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(" Unload MIB? ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let filename = modal
+        .unload_target
+        .and_then(|i| modal.files.get(i))
+        .and_then(|e| e.path.file_name())
+        .and_then(|f| f.to_str())
+        .unwrap_or("?");
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Unload this MIB file?",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  {}", filename),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  The OID tree will be rebuilt.",
+            Style::default().fg(Color::Gray),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  [y/Enter] Confirm  [n/Esc] Cancel",
+            Style::default().fg(Color::Gray),
+        )),
+    ];
     frame.render_widget(Paragraph::new(lines), inner);
 }
 

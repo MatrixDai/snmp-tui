@@ -28,7 +28,7 @@ pub fn load_mibs(paths: &[PathBuf]) -> Result<OidTree, ParseError> {
 
 /// Load MIB files tolerantly, returning parsed modules and any warnings.
 /// Files that fail to parse are skipped with a warning instead of aborting.
-fn load_mibs_tolerant(paths: &[PathBuf]) -> (Vec<RawParsedModule>, Vec<String>) {
+pub fn load_mibs_tolerant(paths: &[PathBuf]) -> (Vec<RawParsedModule>, Vec<String>) {
     let mut all_modules = Vec::new();
     let mut warnings = Vec::new();
 
@@ -70,7 +70,7 @@ pub fn load_mibs_from_sources(sources: &[(&str, &str)]) -> Result<OidTree, Parse
 }
 
 /// Build an OidTree from a set of parsed raw modules.
-fn build_tree_from_modules(all_modules: &[RawParsedModule]) -> Result<OidTree, ParseError> {
+pub fn build_tree_from_modules(all_modules: &[RawParsedModule]) -> Result<OidTree, ParseError> {
     // Step 1: Build the name->OID resolution map
     let resolved_oids = resolve_all_module_oids(all_modules);
 
