@@ -1334,7 +1334,11 @@ fn draw_mib_manager_modal(frame: &mut Frame, modal: &mut crate::modal::MibManage
         let entry = &modal.files[*file_idx];
         let is_selected = (vis_idx + modal.scroll_offset) == modal.selected;
 
-        let filename_raw = entry.path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+        let filename_raw = entry
+            .path
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("");
         let filename: std::borrow::Cow<str> =
             if filename_counts.get(filename_raw).copied().unwrap_or(0) > 1 {
                 let parent = entry

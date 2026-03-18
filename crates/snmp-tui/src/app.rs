@@ -686,8 +686,9 @@ impl App {
                 for entry in entries.flatten() {
                     let file_path = entry.path();
                     if file_path.is_file() {
-                        let canonical =
-                            file_path.canonicalize().unwrap_or_else(|_| file_path.clone());
+                        let canonical = file_path
+                            .canonicalize()
+                            .unwrap_or_else(|_| file_path.clone());
                         if !existing_canonicals.contains(&canonical) {
                             self.mib_files.push(MibFileEntry {
                                 path: file_path,
