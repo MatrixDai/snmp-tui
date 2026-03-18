@@ -86,7 +86,7 @@ impl TableColumnSelectModal {
             self.cursor += 1;
             // Keep cursor visible in a reasonable window (5-line buffer from bottom)
             let visible_height = 10; // typical visible height in modal
-            if self.scroll_offset > 0 && self.cursor >= self.scroll_offset + visible_height {
+            if self.cursor >= self.scroll_offset + visible_height {
                 self.scroll_offset = self.cursor - visible_height + 1;
             }
             self.error = None;
