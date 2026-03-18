@@ -6,8 +6,8 @@ use crate::oid::Oid;
 use crate::parser::{
     OidComponent, RawParsedModule, parse_mib_raw, resolve_oid_components, well_known_oids,
 };
-use crate::types::Syntax;
 use crate::tree::OidTree;
+use crate::types::Syntax;
 
 /// Load MIB files from the given paths and return a unified OID tree.
 ///
@@ -171,7 +171,9 @@ fn build_tc_map(all_modules: &[RawParsedModule]) -> HashMap<String, Syntax> {
     let mut tc_map = HashMap::new();
     for module in all_modules {
         for (obj, comps) in &module.objects {
-            if comps.is_empty() && let Some(syntax) = &obj.syntax {
+            if comps.is_empty()
+                && let Some(syntax) = &obj.syntax
+            {
                 tc_map.insert(obj.name.clone(), syntax.clone());
             }
         }
