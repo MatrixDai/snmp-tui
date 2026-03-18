@@ -20,10 +20,10 @@ jobs:
             artifact: snmp-tui-linux-arm64
           - target: x86_64-apple-darwin
             os: macos-latest
-            artifact: snmp-tui-macos-amd64
+            artifact: snmp-tui-macos-intel
           - target: aarch64-apple-darwin
             os: macos-latest
-            artifact: snmp-tui-macos-arm64
+            artifact: snmp-tui-macos-apple-silicon
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -48,8 +48,6 @@ jobs:
 
       - name: Build release binary
         run: cargo build --release -p snmp-tui --target ${{ matrix.target }}
-        env:
-          BUILD_NUMBER: ${{ github.run_number }}
 
       - name: Package artifact
         run: |
@@ -57,15 +55,12 @@ jobs:
           cp target/${{ matrix.target }}/release/snmp-tui dist/
           cd dist
           tar czf ${{ matrix.artifact }}.tar.gz snmp-tui
-          shasum -a 256 ${{ matrix.artifact }}.tar.gz > ${{ matrix.artifact }}.tar.gz.sha256
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: |
-            dist/${{ matrix.artifact }}.tar.gz
-            dist/${{ matrix.artifact }}.tar.gz.sha256
+          path: dist/${{ matrix.artifact }}.tar.gz
 
   release:
     name: Publish Release
@@ -89,5 +84,4 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           gh release create "$TAG" \
             --generate-notes \
-            artifacts/*.tar.gz \
-            artifacts/*.sha256
+            artifacts/*.tar.gz
