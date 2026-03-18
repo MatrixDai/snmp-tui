@@ -213,7 +213,10 @@ fn parse_oid_value(pair: pest::iterators::Pair<Rule>) -> RawOidValue {
                             match part.as_rule() {
                                 Rule::identifier => name = part.as_str().to_string(),
                                 Rule::integer_value => {
-                                    num = part.as_str().parse().unwrap_or(0);
+                                    num = match part.as_str().parse() {
+                                        Ok(v) => v,
+                                        Err(_) => continue, // Skip malformed components
+                                    };
                                 }
                                 _ => {}
                             }
@@ -221,7 +224,10 @@ fn parse_oid_value(pair: pest::iterators::Pair<Rule>) -> RawOidValue {
                         components.push(OidComponent::NameAndNumber(name, num));
                     }
                     Rule::number_only => {
-                        let num: u32 = comp.as_str().parse().unwrap_or(0);
+                        let num: u32 = match comp.as_str().parse() {
+                            Ok(v) => v,
+                            Err(_) => continue, // Skip malformed components
+                        };
                         components.push(OidComponent::NumberOnly(num));
                     }
                     Rule::name_only => {

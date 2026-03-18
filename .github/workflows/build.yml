@@ -36,10 +36,10 @@ jobs:
             artifact: snmp-tui-linux-arm64
           - target: x86_64-apple-darwin
             os: macos-latest
-            artifact: snmp-tui-macos-amd64
+            artifact: snmp-tui-macos-intel
           - target: aarch64-apple-darwin
             os: macos-latest
-            artifact: snmp-tui-macos-arm64
+            artifact: snmp-tui-macos-apple-silicon
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -64,8 +64,6 @@ jobs:
 
       - name: Build release binary
         run: cargo build --release -p snmp-tui --target ${{ matrix.target }}
-        env:
-          BUILD_NUMBER: ${{ github.run_number }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

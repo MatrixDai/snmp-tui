@@ -686,8 +686,26 @@ fn status_line2(app: &App) -> Line<'static> {
 
     // In-flight operation indicator
     if let Some(ref op) = app.inflight_op {
+        let label = if *op == snmp_client::OperationType::Walk {
+            // Show streaming progress count for walks
+            if let Some(idx) = app.walk_in_progress_idx {
+                if let Some(entry) = app.results_state.entries.get(idx) {
+                    if let crate::app::ResultValue::Multiple(ref pairs) = entry.result {
+                        format!(" [WALK in progress... {} entries] ", pairs.len())
+                    } else {
+                        format!(" [{} in progress...] ", op)
+                    }
+                } else {
+                    format!(" [{} in progress...] ", op)
+                }
+            } else {
+                format!(" [{} in progress...] ", op)
+            }
+        } else {
+            format!(" [{} in progress...] ", op)
+        };
         return Line::from(Span::styled(
-            format!(" [{} in progress...] ", op),
+            label,
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
@@ -772,7 +790,7 @@ fn status_line2(app: &App) -> Line<'static> {
         FocusedPanel::Results => Line::from(vec![
             Span::styled(" Results: ", panel_prefix_style),
             Span::styled(
-                "[j/k] Scroll  [gg] Top  [G] Latest  [/] Search  [y] Copy",
+                "[j/k] Scroll  [gg] Top  [G] Latest  [/] Search  [y] Copy  [e] Export",
                 hint_style,
             ),
         ]),
@@ -1036,13 +1054,20 @@ fn draw_connection_manager_modal(
 
     // Footer hints
     let esc_hint = if modal.is_startup { "Quit" } else { "Close" };
-    lines.push(Line::from(Span::styled(
-        format!(
-            "  [j/k] Navigate  [Enter] Connect  [n] New  [e] Edit  [d] Delete  [Esc] {}",
-            esc_hint
-        ),
-        dim_style,
-    )));
+    if modal.pending_delete && !modal.connections.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  Press [d] again to confirm delete, any other key to cancel",
+            Style::default().fg(Color::Red),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "  [j/k] Navigate  [Enter] Connect  [n] New  [e] Edit  [d] Delete  [Esc] {}",
+                esc_hint
+            ),
+            dim_style,
+        )));
+    }
     lines.push(Line::from(""));
 
     lines.truncate(content_height);

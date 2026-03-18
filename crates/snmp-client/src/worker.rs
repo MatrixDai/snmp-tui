@@ -7,7 +7,10 @@ use mib_parser::Oid;
 use tokio::sync::mpsc;
 
 use crate::channel::{OperationType, SnmpRequest, SnmpResponse};
+use crate::config::SnmpVersion;
+use crate::error::SnmpError;
 use crate::session::SnmpSession;
+use crate::value::SnmpValue;
 
 /// Simple file-based debug logger for SNMP operations.
 struct DebugLog {
@@ -106,7 +109,8 @@ fn worker_loop(
     dbg_log!("Worker started, waiting for requests");
 
     while let Some(request) = request_rx.blocking_recv() {
-        let response = match request {
+        // Walk is handled inline with streaming batches; all other ops return Some.
+        let response: Option<SnmpResponse> = match request {
             SnmpRequest::Connect(config) => {
                 let dest = config.destination();
                 dbg_log!(
@@ -126,7 +130,7 @@ fn worker_loop(
                         creds.priv_protocol
                     );
                 }
-                match SnmpSession::new(config) {
+                Some(match SnmpSession::new(config) {
                     Ok(new_session) => {
                         dbg_log!("  Session created successfully (note: UDP, no actual handshake)");
                         session = Some(new_session);
@@ -144,22 +148,22 @@ fn worker_loop(
                             format!("Connection failed: {}", e),
                         )
                     }
-                }
+                })
             }
 
             SnmpRequest::Disconnect => {
                 dbg_log!("DISCONNECT");
                 session = None;
-                SnmpResponse::ok(
+                Some(SnmpResponse::ok(
                     OperationType::Disconnect,
                     Oid::new(vec![]),
                     "Disconnected".to_string(),
-                )
+                ))
             }
 
             SnmpRequest::Get(oid) => {
                 dbg_log!("GET {}", oid);
-                if let Some(ref mut sess) = session {
+                Some(if let Some(ref mut sess) = session {
                     dbg_log!("  Session config: {:?}", sess.config());
                     match sess.get(&oid) {
                         Ok(value) => {
@@ -174,12 +178,12 @@ fn worker_loop(
                 } else {
                     dbg_log!("  ERROR: No active session");
                     SnmpResponse::error(OperationType::Get, oid, "No active session".to_string())
-                }
+                })
             }
 
             SnmpRequest::GetNext(oid) => {
                 dbg_log!("GETNEXT {}", oid);
-                if let Some(ref mut sess) = session {
+                Some(if let Some(ref mut sess) = session {
                     match sess.get_next(&oid) {
                         Ok((next_oid, value)) => {
                             dbg_log!("  Result: {} = {}", next_oid, value);
@@ -197,7 +201,7 @@ fn worker_loop(
                         oid,
                         "No active session".to_string(),
                     )
-                }
+                })
             }
 
             SnmpRequest::GetBulk {
@@ -205,7 +209,7 @@ fn worker_loop(
                 max_repetitions,
             } => {
                 dbg_log!("GETBULK {} max_rep={}", oid, max_repetitions);
-                if let Some(ref mut sess) = session {
+                Some(if let Some(ref mut sess) = session {
                     match sess.get_bulk(&oid, max_repetitions) {
                         Ok(values) => {
                             dbg_log!("  Result: {} entries", values.len());
@@ -223,31 +227,119 @@ fn worker_loop(
                         oid,
                         "No active session".to_string(),
                     )
-                }
+                })
             }
 
             SnmpRequest::Walk(oid) => {
                 dbg_log!("WALK {}", oid);
                 if let Some(ref mut sess) = session {
-                    match sess.walk(&oid) {
-                        Ok(values) => {
-                            dbg_log!("  Result: {} entries", values.len());
-                            SnmpResponse::multi_value(OperationType::Walk, oid, values)
+                    // Streaming walk: send batches as they arrive
+                    let root_components = oid.components().to_vec();
+                    let mut current_oid = oid.clone();
+                    let mut total_count: usize = 0;
+                    const MAX_WALK_ENTRIES: usize = 10_000;
+                    let mut walk_error = false;
+
+                    loop {
+                        if total_count >= MAX_WALK_ENTRIES {
+                            break;
                         }
-                        Err(e) => {
-                            dbg_log!("  ERROR: {:?}", e);
-                            SnmpResponse::error(OperationType::Walk, oid, e.to_string())
+
+                        if sess.config().version == SnmpVersion::V1 {
+                            match sess.get_next(&current_oid) {
+                                Ok((next_oid, value)) => {
+                                    if !next_oid.components().starts_with(&root_components) {
+                                        break;
+                                    }
+                                    current_oid = next_oid.clone();
+                                    total_count += 1;
+                                    let batch = SnmpResponse::walk_batch(
+                                        oid.clone(),
+                                        vec![(next_oid, value)],
+                                    );
+                                    if response_tx.blocking_send(batch).is_err() {
+                                        dbg_log!("Response receiver dropped during WALK");
+                                        return;
+                                    }
+                                }
+                                Err(SnmpError::EndOfMibView) => break,
+                                Err(e) => {
+                                    dbg_log!("  WALK ERROR: {:?}", e);
+                                    let _ = response_tx.blocking_send(SnmpResponse::error(
+                                        OperationType::Walk,
+                                        oid.clone(),
+                                        e.to_string(),
+                                    ));
+                                    walk_error = true;
+                                    break;
+                                }
+                            }
+                        } else {
+                            match sess.get_bulk(&current_oid, 10) {
+                                Ok(bulk_results) => {
+                                    if bulk_results.is_empty() {
+                                        break;
+                                    }
+                                    let mut batch = Vec::new();
+                                    let mut done = false;
+                                    for (next_oid, value) in bulk_results {
+                                        if matches!(value, SnmpValue::EndOfMibView)
+                                            || !next_oid.components().starts_with(&root_components)
+                                        {
+                                            done = true;
+                                            break;
+                                        }
+                                        current_oid = next_oid.clone();
+                                        batch.push((next_oid, value));
+                                    }
+                                    total_count += batch.len();
+                                    if !batch.is_empty() {
+                                        let resp = SnmpResponse::walk_batch(oid.clone(), batch);
+                                        if response_tx.blocking_send(resp).is_err() {
+                                            dbg_log!("Response receiver dropped during WALK");
+                                            return;
+                                        }
+                                    }
+                                    if done {
+                                        break;
+                                    }
+                                }
+                                Err(e) => {
+                                    dbg_log!("  WALK ERROR: {:?}", e);
+                                    let _ = response_tx.blocking_send(SnmpResponse::error(
+                                        OperationType::Walk,
+                                        oid.clone(),
+                                        e.to_string(),
+                                    ));
+                                    walk_error = true;
+                                    break;
+                                }
+                            }
                         }
                     }
+
+                    if !walk_error {
+                        dbg_log!("  WALK complete: {} entries", total_count);
+                        let complete = SnmpResponse::walk_complete(oid, total_count);
+                        if response_tx.blocking_send(complete).is_err() {
+                            dbg_log!("Response receiver dropped after WALK");
+                            return;
+                        }
+                    }
+                    None // Already sent inline
                 } else {
                     dbg_log!("  ERROR: No active session");
-                    SnmpResponse::error(OperationType::Walk, oid, "No active session".to_string())
+                    Some(SnmpResponse::error(
+                        OperationType::Walk,
+                        oid,
+                        "No active session".to_string(),
+                    ))
                 }
             }
 
             SnmpRequest::Set { oid, value } => {
                 dbg_log!("SET {} = {:?}", oid, value);
-                if let Some(ref mut sess) = session {
+                Some(if let Some(ref mut sess) = session {
                     match sess.set(&oid, &value) {
                         Ok(()) => {
                             dbg_log!("  SET successful");
@@ -261,11 +353,13 @@ fn worker_loop(
                 } else {
                     dbg_log!("  ERROR: No active session");
                     SnmpResponse::error(OperationType::Set, oid, "No active session".to_string())
-                }
+                })
             }
         };
 
-        if response_tx.blocking_send(response).is_err() {
+        if let Some(resp) = response
+            && response_tx.blocking_send(resp).is_err()
+        {
             dbg_log!("Response receiver dropped, shutting down worker");
             break;
         }
