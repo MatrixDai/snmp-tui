@@ -2071,7 +2071,8 @@ impl App {
                     self.detail_height_percent = (self.detail_height_percent + 5).min(85);
                 }
                 FocusedPanel::Results => {
-                    self.detail_height_percent = self.detail_height_percent.saturating_sub(5).max(15);
+                    self.detail_height_percent =
+                        self.detail_height_percent.saturating_sub(5).max(15);
                 }
             },
             Message::PanelShrink => match self.focused {
@@ -2079,7 +2080,8 @@ impl App {
                     self.tree_width_percent = self.tree_width_percent.saturating_sub(5).max(15);
                 }
                 FocusedPanel::Detail => {
-                    self.detail_height_percent = self.detail_height_percent.saturating_sub(5).max(15);
+                    self.detail_height_percent =
+                        self.detail_height_percent.saturating_sub(5).max(15);
                 }
                 FocusedPanel::Results => {
                     self.detail_height_percent = (self.detail_height_percent + 5).min(85);
