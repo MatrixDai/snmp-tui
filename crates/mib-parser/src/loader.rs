@@ -6,6 +6,7 @@ use crate::oid::Oid;
 use crate::parser::{
     OidComponent, RawParsedModule, parse_mib_raw, resolve_oid_components, well_known_oids,
 };
+use crate::types::Syntax;
 use crate::tree::OidTree;
 
 /// Load MIB files from the given paths and return a unified OID tree.
@@ -75,6 +76,8 @@ fn build_tree_from_modules(all_modules: &[RawParsedModule]) -> Result<OidTree, P
 
     // Step 2: Build the OID tree
     let mut tree = OidTree::new();
+    // Step 2.5: Build type resolution map (TC + SMIv1 type assignments)
+    let tc_map = build_tc_map(all_modules);
 
     // Insert well-known root nodes
     tree.insert(&Oid::new(vec![1]), "iso");
@@ -103,6 +106,10 @@ fn build_tree_from_modules(all_modules: &[RawParsedModule]) -> Result<OidTree, P
                 let mut resolved_obj = obj.clone();
                 resolved_obj.oid = oid.clone();
                 resolved_obj.source_file = module.source_file.clone();
+                // Resolve any TC/type references to concrete SNMP types
+                if let Some(syntax) = resolved_obj.syntax.take() {
+                    resolved_obj.syntax = Some(resolve_syntax(syntax, &tc_map));
+                }
                 if let Some(node) = tree.get_mut(idx) {
                     node.mib_object = Some(resolved_obj);
                 }
@@ -157,4 +164,39 @@ fn resolve_all_module_oids(modules: &[RawParsedModule]) -> HashMap<String, Oid> 
     }
 
     resolved
+}
+
+/// Build a map of type name -> Syntax for all TC and SMIv1 type assignments (no OID).
+fn build_tc_map(all_modules: &[RawParsedModule]) -> HashMap<String, Syntax> {
+    let mut tc_map = HashMap::new();
+    for module in all_modules {
+        for (obj, comps) in &module.objects {
+            if comps.is_empty() && let Some(syntax) = &obj.syntax {
+                tc_map.insert(obj.name.clone(), syntax.clone());
+            }
+        }
+    }
+    tc_map
+}
+
+/// Resolve a Syntax that may reference a TC or SMIv1 type to a concrete SNMP type.
+/// Iterates up to 10 levels to handle chained definitions.
+fn resolve_syntax(syntax: Syntax, tc_map: &HashMap<String, Syntax>) -> Syntax {
+    let mut current = syntax;
+    for _ in 0..10 {
+        match current {
+            Syntax::TextualConvention(ref name) => match tc_map.get(name) {
+                Some(resolved) => current = resolved.clone(),
+                None => break,
+            },
+            Syntax::Constrained { base, constraint } => {
+                return Syntax::Constrained {
+                    base: Box::new(resolve_syntax(*base, tc_map)),
+                    constraint,
+                };
+            }
+            _ => break,
+        }
+    }
+    current
 }
