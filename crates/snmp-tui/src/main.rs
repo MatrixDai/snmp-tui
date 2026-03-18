@@ -5,7 +5,7 @@ mod modal;
 mod tree_state;
 mod ui;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -118,8 +118,16 @@ fn load_mibs(config: &config::AppConfig) -> (mib_parser::OidTree, Vec<MibFileEnt
         .join("mib-parser")
         .join("mibs");
 
-    // Collect (path, is_bundled) pairs.
+    // Collect (path, is_bundled) pairs — with canonical-path dedup.
     let mut path_infos: Vec<(PathBuf, bool)> = Vec::new();
+    let mut seen_canonical: HashSet<PathBuf> = HashSet::new();
+
+    let mut add_path = |path: PathBuf, is_bundled: bool| {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if seen_canonical.insert(canonical) {
+            path_infos.push((path, is_bundled));
+        }
+    };
 
     // Bundled MIBs
     if bundled_dir.exists() {
@@ -142,7 +150,7 @@ fn load_mibs(config: &config::AppConfig) -> (mib_parser::OidTree, Vec<MibFileEnt
         for name in &bundled_files {
             let path = bundled_dir.join(name);
             if path.exists() {
-                path_infos.push((path, true));
+                add_path(path, true);
             }
         }
     }
@@ -155,7 +163,7 @@ fn load_mibs(config: &config::AppConfig) -> (mib_parser::OidTree, Vec<MibFileEnt
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file() {
-                    path_infos.push((path, false));
+                    add_path(path, false);
                 }
             }
         }
@@ -167,7 +175,7 @@ fn load_mibs(config: &config::AppConfig) -> (mib_parser::OidTree, Vec<MibFileEnt
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file() {
-                    path_infos.push((path, false));
+                    add_path(path, false);
                 }
             }
         }
@@ -176,7 +184,7 @@ fn load_mibs(config: &config::AppConfig) -> (mib_parser::OidTree, Vec<MibFileEnt
     // Individual config files
     for file in &config.mib_files {
         if file.exists() {
-            path_infos.push((file.clone(), false));
+            add_path(file.clone(), false);
         }
     }
 
@@ -220,6 +228,31 @@ fn load_mibs(config: &config::AppConfig) -> (mib_parser::OidTree, Vec<MibFileEnt
         }
         entry.1 += module.objects.len();
     }
+
+    // Module-name dedup: if every module in a file was already seen in an
+    // earlier file, that file is a copy/duplicate — skip it.
+    let mut seen_modules: HashSet<String> = HashSet::new();
+    let mut duplicate_paths: HashSet<String> = HashSet::new();
+    for (path, _) in &path_infos {
+        let path_str = path.display().to_string();
+        if let Some((modules, _)) = path_modules.get(&path_str) {
+            let all_seen = !modules.is_empty() && modules.iter().all(|m| seen_modules.contains(m));
+            if all_seen {
+                duplicate_paths.insert(path_str.clone());
+                if config.debug {
+                    debug_log_warning(&format!("Skipping duplicate MIB: {}", path_str));
+                }
+            } else {
+                for m in modules {
+                    seen_modules.insert(m.clone());
+                }
+            }
+        }
+    }
+    let path_infos: Vec<(PathBuf, bool)> = path_infos
+        .into_iter()
+        .filter(|(p, _)| !duplicate_paths.contains(&p.display().to_string()))
+        .collect();
 
     // Build MibFileEntry list.
     let mib_file_entries: Vec<MibFileEntry> = path_infos

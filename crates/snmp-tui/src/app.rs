@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -602,6 +602,30 @@ impl App {
             entry.1 += module.objects.len();
         }
 
+        // Module-name dedup: remove files whose modules were all already seen
+        // by an earlier file in the list (content-identical copies).
+        let mut seen_modules: HashSet<String> = HashSet::new();
+        let mut duplicate_paths: HashSet<String> = HashSet::new();
+        for entry in &self.mib_files {
+            let path_str = entry.path.display().to_string();
+            if let Some((modules, _)) = path_modules.get(&path_str) {
+                let all_seen =
+                    !modules.is_empty() && modules.iter().all(|m| seen_modules.contains(m));
+                if all_seen {
+                    duplicate_paths.insert(path_str.clone());
+                    if self.debug {
+                        debug_log_warning(&format!("Skipping duplicate MIB: {}", path_str));
+                    }
+                } else {
+                    for m in modules {
+                        seen_modules.insert(m.clone());
+                    }
+                }
+            }
+        }
+        self.mib_files
+            .retain(|e| !duplicate_paths.contains(&e.path.display().to_string()));
+
         // Update MibFileEntry statuses.
         for entry in &mut self.mib_files {
             let path_str = entry.path.display().to_string();
@@ -650,29 +674,43 @@ impl App {
     /// Add a path (file or directory) to the tracked list and rebuild.
     pub fn mib_load_path(&mut self, path_str: &str) {
         let path = PathBuf::from(path_str.trim());
+        // Build canonical-path set for existing files to detect symlink duplicates.
+        let existing_canonicals: HashSet<PathBuf> = self
+            .mib_files
+            .iter()
+            .map(|e| e.path.canonicalize().unwrap_or_else(|_| e.path.clone()))
+            .collect();
+
         if path.is_dir() {
             if let Ok(entries) = std::fs::read_dir(&path) {
                 for entry in entries.flatten() {
                     let file_path = entry.path();
-                    if file_path.is_file() && !self.mib_files.iter().any(|e| e.path == file_path) {
-                        self.mib_files.push(MibFileEntry {
-                            path: file_path,
-                            modules: Vec::new(),
-                            object_count: 0,
-                            status: MibFileStatus::ParseError("Pending".to_string()),
-                            is_bundled: false,
-                        });
+                    if file_path.is_file() {
+                        let canonical =
+                            file_path.canonicalize().unwrap_or_else(|_| file_path.clone());
+                        if !existing_canonicals.contains(&canonical) {
+                            self.mib_files.push(MibFileEntry {
+                                path: file_path,
+                                modules: Vec::new(),
+                                object_count: 0,
+                                status: MibFileStatus::ParseError("Pending".to_string()),
+                                is_bundled: false,
+                            });
+                        }
                     }
                 }
             }
-        } else if !path.as_os_str().is_empty() && !self.mib_files.iter().any(|e| e.path == path) {
-            self.mib_files.push(MibFileEntry {
-                path,
-                modules: Vec::new(),
-                object_count: 0,
-                status: MibFileStatus::ParseError("Pending".to_string()),
-                is_bundled: false,
-            });
+        } else if !path.as_os_str().is_empty() {
+            let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+            if !existing_canonicals.contains(&canonical) {
+                self.mib_files.push(MibFileEntry {
+                    path,
+                    modules: Vec::new(),
+                    object_count: 0,
+                    status: MibFileStatus::ParseError("Pending".to_string()),
+                    is_bundled: false,
+                });
+            }
         }
         self.rebuild_oid_tree();
     }

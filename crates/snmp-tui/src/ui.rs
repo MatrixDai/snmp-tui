@@ -1313,6 +1313,14 @@ fn draw_mib_manager_modal(frame: &mut Frame, modal: &mut crate::modal::MibManage
     let col_width = (inner.width as usize).saturating_sub(2);
     let mut lines: Vec<Line> = Vec::new();
 
+    // Compute non-unique filenames so we can show parent/filename for disambiguation.
+    let mut filename_counts: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::new();
+    for e in &modal.files {
+        let name = e.path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+        *filename_counts.entry(name).or_insert(0) += 1;
+    }
+
     let visible: Vec<(usize, usize)> = modal
         .filtered
         .iter()
@@ -1326,11 +1334,19 @@ fn draw_mib_manager_modal(frame: &mut Frame, modal: &mut crate::modal::MibManage
         let entry = &modal.files[*file_idx];
         let is_selected = (vis_idx + modal.scroll_offset) == modal.selected;
 
-        let filename = entry
-            .path
-            .file_name()
-            .and_then(|f| f.to_str())
-            .unwrap_or("");
+        let filename_raw = entry.path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+        let filename: std::borrow::Cow<str> =
+            if filename_counts.get(filename_raw).copied().unwrap_or(0) > 1 {
+                let parent = entry
+                    .path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("?");
+                std::borrow::Cow::Owned(format!("{}/{}", parent, filename_raw))
+            } else {
+                std::borrow::Cow::Borrowed(filename_raw)
+            };
 
         let (status_icon, status_sty) = match &entry.status {
             crate::modal::MibFileStatus::Loaded => ("✓", ok_style),
