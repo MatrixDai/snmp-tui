@@ -125,6 +125,14 @@ fn handle_modal_key(key: KeyEvent, app: &App) -> Option<Message> {
         KeyCode::Char('g') if !text_input => Some(Message::ModalJumpTop),
         KeyCode::Char('G') if !text_input => Some(Message::ModalJumpBottom),
 
+        // Home/End: jump to top/bottom (works in text-input mode too)
+        KeyCode::Home => Some(Message::ModalJumpTop),
+        KeyCode::End => Some(Message::ModalJumpBottom),
+
+        // PageUp/PageDown: page-scroll
+        KeyCode::PageUp => Some(Message::ModalPageUp),
+        KeyCode::PageDown => Some(Message::ModalPageDown),
+
         // Everything else (including j/k/g/G in text-input mode) is a typed character
         KeyCode::Char(c) => {
             if c == '\n' || (c == 'm' && key.modifiers.contains(KeyModifiers::CONTROL)) {

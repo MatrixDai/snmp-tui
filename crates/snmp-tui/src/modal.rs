@@ -988,14 +988,25 @@ pub struct SearchModal {
     pub query: String,
     pub results: Vec<SearchResult>,
     pub selected: usize,
+    pub scroll_offset: usize,
+    pub viewport_height: usize,
     /// Max results to show.
     pub max_results: usize,
+}
+
+/// Indicates which field matched the search query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchField {
+    Name,
+    Oid,
+    Description,
 }
 
 pub struct SearchResult {
     pub node_idx: NodeIndex,
     pub name: String,
     pub oid: String,
+    pub match_field: MatchField,
 }
 
 impl SearchModal {
@@ -1004,6 +1015,8 @@ impl SearchModal {
             query: String::new(),
             results: Vec::new(),
             selected: 0,
+            scroll_offset: 0,
+            viewport_height: 10,
             max_results: 100,
         }
     }
@@ -1021,12 +1034,55 @@ impl SearchModal {
     pub fn select_next(&mut self) {
         if !self.results.is_empty() && self.selected + 1 < self.results.len() {
             self.selected += 1;
+            if self.viewport_height > 0
+                && self.selected >= self.scroll_offset + self.viewport_height
+            {
+                self.scroll_offset = self.selected - self.viewport_height + 1;
+            }
         }
     }
 
     pub fn select_prev(&mut self) {
         if self.selected > 0 {
             self.selected -= 1;
+            if self.selected < self.scroll_offset {
+                self.scroll_offset = self.selected;
+            }
+        }
+    }
+
+    pub fn jump_top(&mut self) {
+        self.selected = 0;
+        self.scroll_offset = 0;
+    }
+
+    pub fn jump_bottom(&mut self) {
+        if !self.results.is_empty() {
+            self.selected = self.results.len() - 1;
+            if self.viewport_height > 0 && self.selected >= self.viewport_height {
+                self.scroll_offset = self.selected - self.viewport_height + 1;
+            }
+        }
+    }
+
+    pub fn page_down(&mut self) {
+        if self.results.is_empty() || self.viewport_height == 0 {
+            return;
+        }
+        let new_selected = (self.selected + self.viewport_height).min(self.results.len() - 1);
+        self.selected = new_selected;
+        if self.selected >= self.scroll_offset + self.viewport_height {
+            self.scroll_offset = self.selected - self.viewport_height + 1;
+        }
+    }
+
+    pub fn page_up(&mut self) {
+        if self.results.is_empty() || self.viewport_height == 0 {
+            return;
+        }
+        self.selected = self.selected.saturating_sub(self.viewport_height);
+        if self.selected < self.scroll_offset {
+            self.scroll_offset = self.selected;
         }
     }
 
@@ -1037,27 +1093,50 @@ impl SearchModal {
     fn update_results(&mut self, tree: &OidTree) {
         self.results.clear();
         self.selected = 0;
+        self.scroll_offset = 0;
 
         let query = self.query.to_lowercase();
         if query.is_empty() {
             return;
         }
 
-        // Iterate all nodes in the tree, matching by name
+        // Iterate all nodes in the tree, matching by name, OID, or description.
         for i in 0..tree.node_count() {
             let idx = NodeIndex::from_raw(i);
-            if let Some(node) = tree.get(idx)
-                && !node.name.is_empty()
-                && node.name.to_lowercase().contains(&query)
+            let Some(node) = tree.get(idx) else {
+                continue;
+            };
+            if node.name.is_empty() {
+                continue;
+            }
+
+            let oid = tree
+                .resolve_oid(idx)
+                .map(|o| o.to_string())
+                .unwrap_or_default();
+
+            // Check name first, then OID, then description — take the first match.
+            let match_field = if node.name.to_lowercase().contains(&query) {
+                Some(MatchField::Name)
+            } else if oid.contains(&query) {
+                Some(MatchField::Oid)
+            } else if node
+                .mib_object
+                .as_ref()
+                .and_then(|obj| obj.description.as_ref())
+                .is_some_and(|desc| desc.to_lowercase().contains(&query))
             {
-                let oid = tree
-                    .resolve_oid(idx)
-                    .map(|o| o.to_string())
-                    .unwrap_or_default();
+                Some(MatchField::Description)
+            } else {
+                None
+            };
+
+            if let Some(match_field) = match_field {
                 self.results.push(SearchResult {
                     node_idx: idx,
                     name: node.name.clone(),
                     oid,
+                    match_field,
                 });
                 if self.results.len() >= self.max_results {
                     break;
