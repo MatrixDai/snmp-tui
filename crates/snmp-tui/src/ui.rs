@@ -1173,8 +1173,6 @@ fn draw_set_modal(frame: &mut Frame, modal: &crate::modal::SetModal) {
 }
 
 fn draw_search_modal(frame: &mut Frame, modal: &mut crate::modal::SearchModal) {
-    use crate::modal::MatchField;
-
     let area = centered_rect(60, 70, frame.area());
     frame.render_widget(Clear, area);
 
@@ -1193,9 +1191,7 @@ fn draw_search_modal(frame: &mut Frame, modal: &mut crate::modal::SearchModal) {
     let selected_style = Style::default().fg(Color::Black).bg(Color::Cyan);
     let dim_style = Style::default().fg(Color::Gray);
     let oid_style = Style::default().fg(Color::Gray);
-    let match_name_style = Style::default().fg(Color::Green);
-    let match_oid_style = Style::default().fg(Color::Yellow);
-    let match_desc_style = Style::default().fg(Color::Magenta);
+    let index_style = Style::default().fg(Color::DarkGray);
 
     let viewport_height = inner.height as usize;
     // Header: search input + blank + match count + blank = 4 lines
@@ -1256,18 +1252,13 @@ fn draw_search_modal(frame: &mut Frame, modal: &mut crate::modal::SearchModal) {
             } else {
                 value_style
             };
-            let prefix = if is_selected { "> " } else { "  " };
-
-            let (match_tag, match_style) = match result.match_field {
-                MatchField::Name => ("[name]", match_name_style),
-                MatchField::Oid => ("[oid]", match_oid_style),
-                MatchField::Description => ("[desc]", match_desc_style),
-            };
+            let prefix = if is_selected { ">" } else { " " };
+            let idx_str = format!("{:>3}.", i + 1);
 
             lines.push(Line::from(vec![
-                Span::styled(format!("{}{}", prefix, result.name), style),
+                Span::styled(format!("{}{} ", prefix, idx_str), index_style),
+                Span::styled(result.name.clone(), style),
                 Span::styled(format!("  {}", result.oid), oid_style),
-                Span::styled(format!("  {}", match_tag), match_style),
             ]));
         }
 

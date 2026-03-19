@@ -994,19 +994,10 @@ pub struct SearchModal {
     pub max_results: usize,
 }
 
-/// Indicates which field matched the search query.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MatchField {
-    Name,
-    Oid,
-    Description,
-}
-
 pub struct SearchResult {
     pub node_idx: NodeIndex,
     pub name: String,
     pub oid: String,
-    pub match_field: MatchField,
 }
 
 impl SearchModal {
@@ -1115,28 +1106,20 @@ impl SearchModal {
                 .map(|o| o.to_string())
                 .unwrap_or_default();
 
-            // Check name first, then OID, then description — take the first match.
-            let match_field = if node.name.to_lowercase().contains(&query) {
-                Some(MatchField::Name)
-            } else if oid.contains(&query) {
-                Some(MatchField::Oid)
-            } else if node
-                .mib_object
-                .as_ref()
-                .and_then(|obj| obj.description.as_ref())
-                .is_some_and(|desc| desc.to_lowercase().contains(&query))
-            {
-                Some(MatchField::Description)
-            } else {
-                None
-            };
+            // Match against name, OID, or description.
+            let matched = node.name.to_lowercase().contains(&query)
+                || oid.contains(&query)
+                || node
+                    .mib_object
+                    .as_ref()
+                    .and_then(|obj| obj.description.as_ref())
+                    .is_some_and(|desc| desc.to_lowercase().contains(&query));
 
-            if let Some(match_field) = match_field {
+            if matched {
                 self.results.push(SearchResult {
                     node_idx: idx,
                     name: node.name.clone(),
                     oid,
-                    match_field,
                 });
                 if self.results.len() >= self.max_results {
                     break;
