@@ -1225,17 +1225,10 @@ fn draw_search_modal(frame: &mut Frame, modal: &mut crate::modal::SearchModal) {
             lines.push(Line::from(""));
         }
     } else {
-        let position = if modal.results.len() > list_height {
-            format!(
-                "  {} match(es)  [{}/{}]:",
-                modal.results.len(),
-                modal.selected + 1,
-                modal.results.len()
-            )
-        } else {
-            format!("  {} match(es):", modal.results.len())
-        };
-        lines.push(Line::from(Span::styled(position, dim_style)));
+        lines.push(Line::from(Span::styled(
+            format!("  {} match(es):", modal.results.len()),
+            dim_style,
+        )));
         lines.push(Line::from(""));
 
         // Render only visible results using scroll_offset
