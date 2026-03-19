@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use mib_parser::{NodeIndex, OidTree, Syntax};
 use ratatui::widgets::TableState;
 use snmp_client::SnmpValue;
@@ -9,7 +11,7 @@ pub enum Modal {
     ConnectionManager(ConnectionManagerModal),
     Set(SetModal),
     Search(SearchModal),
-    MibInfo(MibInfoModal),
+    MibManager(MibManagerModal),
     TableColumnSelect(TableColumnSelectModal),
     TableView(TableViewModal),
 }
@@ -86,7 +88,7 @@ impl TableColumnSelectModal {
             self.cursor += 1;
             // Keep cursor visible in a reasonable window (5-line buffer from bottom)
             let visible_height = 10; // typical visible height in modal
-            if self.scroll_offset > 0 && self.cursor >= self.scroll_offset + visible_height {
+            if self.cursor >= self.scroll_offset + visible_height {
                 self.scroll_offset = self.cursor - visible_height + 1;
             }
             self.error = None;
@@ -1066,68 +1068,126 @@ impl SearchModal {
 }
 
 // ============================================================
-// MIB Info Modal
+// MIB Manager Modal
 // ============================================================
 
-pub struct MibInfoModal {
-    /// Full list of (module_name, object_count, source_file).
-    pub modules: Vec<(String, usize, String)>,
-    /// Filtered view (indices into `modules`) when searching.
-    pub filtered: Vec<usize>,
-    /// Total object count across all modules.
-    pub total_objects: usize,
-    /// Cursor position in filtered list.
-    pub selected: usize,
-    /// Scroll offset for the list.
-    pub scroll_offset: usize,
-    /// Viewport height (set during render).
-    pub viewport_height: usize,
-    /// Search state.
-    pub search_active: bool,
-    pub search_query: String,
-    /// Sub-view: object list for a selected module.
-    pub object_view: Option<ObjectListView>,
+/// Status of a MIB file entry.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MibFileStatus {
+    Loaded,
+    ParseError(String),
+    ReadError(String),
 }
 
-impl MibInfoModal {
-    pub fn new(tree: &OidTree) -> Self {
-        let mut module_map: std::collections::BTreeMap<String, (usize, String)> =
-            std::collections::BTreeMap::new();
-        for i in 0..tree.node_count() {
-            let idx = NodeIndex::from_raw(i);
-            if let Some(node) = tree.get(idx)
-                && let Some(ref mib_obj) = node.mib_object
-                && !mib_obj.module.is_empty()
-            {
-                let entry = module_map
-                    .entry(mib_obj.module.clone())
-                    .or_insert((0, mib_obj.source_file.clone()));
-                entry.0 += 1;
-            }
-        }
-        let total_objects = module_map.values().map(|(c, _)| c).sum();
-        let modules: Vec<_> = module_map
-            .into_iter()
-            .map(|(name, (count, file))| (name, count, file))
-            .collect();
-        let filtered = (0..modules.len()).collect();
+/// Metadata for a single MIB file tracked by the application.
+#[derive(Debug, Clone)]
+pub struct MibFileEntry {
+    pub path: PathBuf,
+    pub modules: Vec<String>,
+    pub object_count: usize,
+    pub status: MibFileStatus,
+    pub is_bundled: bool,
+}
+
+/// Which sub-view the MIB Manager is showing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MibManagerView {
+    FileList,
+    ObjectList,
+    LoadInput,
+    ConfirmUnload,
+}
+
+pub struct MibManagerModal {
+    /// Snapshot of MIB files at modal open / after last operation.
+    pub files: Vec<MibFileEntry>,
+    /// Filtered indices into `files`.
+    pub filtered: Vec<usize>,
+    /// Cursor position in filtered list.
+    pub selected: usize,
+    pub scroll_offset: usize,
+    pub viewport_height: usize,
+    pub search_active: bool,
+    pub search_query: String,
+    pub view: MibManagerView,
+    /// Sub-view: object list for a selected file.
+    pub object_view: Option<ObjectListView>,
+    /// Text being typed for load-new path.
+    pub load_input: String,
+    /// Index into `files` of the entry pending unload confirmation.
+    pub unload_target: Option<usize>,
+    /// Transient feedback message after an operation (message, is_error).
+    pub feedback_message: Option<(String, bool)>,
+}
+
+impl MibManagerModal {
+    pub fn new(files: Vec<MibFileEntry>) -> Self {
+        let n = files.len();
         Self {
-            modules,
-            filtered,
-            total_objects,
+            files,
+            filtered: (0..n).collect(),
             selected: 0,
             scroll_offset: 0,
             viewport_height: 0,
             search_active: false,
             search_query: String::new(),
+            view: MibManagerView::FileList,
             object_view: None,
+            load_input: String::new(),
+            unload_target: None,
+            feedback_message: None,
+        }
+    }
+
+    /// Update the files snapshot after a rebuild, preserving cursor position.
+    pub fn refresh_files(&mut self, files: Vec<MibFileEntry>) {
+        let selected_path = self
+            .filtered
+            .get(self.selected)
+            .and_then(|&i| self.files.get(i))
+            .map(|e| e.path.clone());
+
+        let n = files.len();
+        self.files = files;
+        self.filtered = (0..n).collect();
+
+        if !self.search_query.is_empty() {
+            self.refilter();
+        }
+
+        // Restore selection by path if possible
+        if let Some(ref path) = selected_path
+            && let Some(pos) = self
+                .filtered
+                .iter()
+                .position(|&i| &self.files[i].path == path)
+        {
+            self.selected = pos;
+            return;
+        }
+        // Clamp
+        if !self.filtered.is_empty() && self.selected >= self.filtered.len() {
+            self.selected = self.filtered.len() - 1;
+        }
+    }
+
+    /// Returns true when printable characters should be routed to text input.
+    pub fn is_text_input_mode(&self) -> bool {
+        match self.view {
+            MibManagerView::LoadInput => true,
+            MibManagerView::FileList => self.search_active,
+            MibManagerView::ObjectList => self
+                .object_view
+                .as_ref()
+                .map(|ov| ov.search_active)
+                .unwrap_or(false),
+            MibManagerView::ConfirmUnload => false,
         }
     }
 
     pub fn scroll_up(&mut self) {
         if self.selected > 0 {
             self.selected -= 1;
-            // Adjust scroll to keep selected visible
             if self.selected < self.scroll_offset {
                 self.scroll_offset = self.selected;
             }
@@ -1137,10 +1197,23 @@ impl MibInfoModal {
     pub fn scroll_down(&mut self) {
         if self.selected + 1 < self.filtered.len() {
             self.selected += 1;
-            // Adjust scroll to keep selected visible
             if self.viewport_height > 0
                 && self.selected >= self.scroll_offset + self.viewport_height
             {
+                self.scroll_offset = self.selected - self.viewport_height + 1;
+            }
+        }
+    }
+
+    pub fn jump_top(&mut self) {
+        self.selected = 0;
+        self.scroll_offset = 0;
+    }
+
+    pub fn jump_bottom(&mut self) {
+        if !self.filtered.is_empty() {
+            self.selected = self.filtered.len() - 1;
+            if self.viewport_height > 0 && self.selected >= self.viewport_height {
                 self.scroll_offset = self.selected - self.viewport_height + 1;
             }
         }
@@ -1154,7 +1227,7 @@ impl MibInfoModal {
     pub fn deactivate_search(&mut self) {
         self.search_active = false;
         self.search_query.clear();
-        self.filtered = (0..self.modules.len()).collect();
+        self.filtered = (0..self.files.len()).collect();
         self.selected = 0;
         self.scroll_offset = 0;
     }
@@ -1172,13 +1245,24 @@ impl MibInfoModal {
     fn refilter(&mut self) {
         let query = self.search_query.to_lowercase();
         if query.is_empty() {
-            self.filtered = (0..self.modules.len()).collect();
+            self.filtered = (0..self.files.len()).collect();
         } else {
             self.filtered = self
-                .modules
+                .files
                 .iter()
                 .enumerate()
-                .filter(|(_, (name, _, _))| name.to_lowercase().contains(&query))
+                .filter(|(_, entry)| {
+                    let filename = entry
+                        .path
+                        .file_name()
+                        .and_then(|f| f.to_str())
+                        .unwrap_or("");
+                    filename.to_lowercase().contains(&query)
+                        || entry
+                            .modules
+                            .iter()
+                            .any(|m| m.to_lowercase().contains(&query))
+                })
                 .map(|(i, _)| i)
                 .collect();
         }
@@ -1186,18 +1270,19 @@ impl MibInfoModal {
         self.scroll_offset = 0;
     }
 
+    /// Drill into the selected file's objects.
     pub fn open_object_view(&mut self, tree: &OidTree) {
-        let module_idx = match self.filtered.get(self.selected) {
+        let file_idx = match self.filtered.get(self.selected) {
             Some(&idx) => idx,
             None => return,
         };
-        let module_name = &self.modules[module_idx].0;
+        let file_entry = &self.files[file_idx];
         let mut objects: Vec<(String, String)> = Vec::new();
         for i in 0..tree.node_count() {
             let idx = NodeIndex::from_raw(i);
             if let Some(node) = tree.get(idx)
                 && let Some(ref mib_obj) = node.mib_object
-                && mib_obj.module == *module_name
+                && file_entry.modules.iter().any(|m| m == &mib_obj.module)
             {
                 let oid_str = if mib_obj.oid.is_empty() {
                     String::new()
@@ -1209,8 +1294,19 @@ impl MibInfoModal {
         }
         objects.sort_by(|a, b| a.0.cmp(&b.0));
         let filtered = (0..objects.len()).collect();
+        let module_title = match file_entry.modules.len() {
+            0 => file_entry
+                .path
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or("Unknown")
+                .to_string(),
+            1 => file_entry.modules[0].clone(),
+            _ => format!("{}..", file_entry.modules[0]),
+        };
+        self.view = MibManagerView::ObjectList;
         self.object_view = Some(ObjectListView {
-            module_name: module_name.clone(),
+            module_name: module_title,
             objects,
             selected: 0,
             scroll_offset: 0,
@@ -1223,6 +1319,15 @@ impl MibInfoModal {
 
     pub fn close_object_view(&mut self) {
         self.object_view = None;
+        self.view = MibManagerView::FileList;
+    }
+
+    /// Return whether the currently selected file is a bundled (core) MIB.
+    pub fn selected_file_is_bundled(&self) -> bool {
+        let Some(&file_idx) = self.filtered.get(self.selected) else {
+            return false;
+        };
+        self.files[file_idx].is_bundled
     }
 }
 

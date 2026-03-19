@@ -1003,9 +1003,55 @@ fn parse_assignment_raw(
                     objects.push((obj, comps));
                 }
             }
+            Rule::type_assignment => {
+                if let Some(obj) = parse_type_assignment_raw(inner, module_name) {
+                    objects.push((obj, Vec::new()));
+                }
+            }
             _ => {}
         }
     }
+}
+
+fn parse_type_assignment_raw(
+    pair: pest::iterators::Pair<Rule>,
+    module_name: &str,
+) -> Option<MibObject> {
+    let mut name = String::new();
+    let mut syntax = None;
+    for part in pair.into_inner() {
+        match part.as_rule() {
+            Rule::identifier => {
+                if name.is_empty() {
+                    name = part.as_str().to_string();
+                }
+            }
+            Rule::syntax_type => {
+                syntax = Some(parse_syntax_type(part));
+            }
+            _ => {}
+        }
+    }
+    let syntax = syntax?;
+    // Skip Sequence types — structural table definitions, not value types
+    if matches!(syntax, Syntax::Sequence(_)) {
+        return None;
+    }
+    if name.is_empty() {
+        return None;
+    }
+    Some(MibObject {
+        name,
+        oid: Oid::new(Vec::new()),
+        module: module_name.to_string(),
+        source_file: String::new(),
+        syntax: Some(syntax),
+        access: None,
+        status: None,
+        description: None,
+        index_clause: None,
+        defval: None,
+    })
 }
 
 fn parse_def_with_oid_raw(

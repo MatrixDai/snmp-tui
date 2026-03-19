@@ -5,7 +5,8 @@ mod modal;
 mod tree_state;
 mod ui;
 
-use std::io;
+use std::collections::{HashMap, HashSet};
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -19,6 +20,7 @@ use ratatui::backend::CrosstermBackend;
 
 use app::App;
 use config::{CliArgs, load_config_file, merge_config};
+use modal::{MibFileEntry, MibFileStatus};
 
 fn main() -> io::Result<()> {
     let cli = CliArgs::parse();
@@ -26,7 +28,7 @@ fn main() -> io::Result<()> {
     let app_config = merge_config(file_config, &cli);
 
     // Load MIBs
-    let oid_tree = load_mibs(&app_config);
+    let (oid_tree, mib_files) = load_mibs(&app_config);
 
     // Install panic hook BEFORE terminal setup so it can restore even
     // if setup itself panics
@@ -43,7 +45,8 @@ fn main() -> io::Result<()> {
     let runtime = tokio::runtime::Runtime::new().map_err(io::Error::other)?;
 
     // Run application within tokio context
-    let result = runtime.block_on(async { run(&mut terminal, oid_tree, &app_config).await });
+    let result =
+        runtime.block_on(async { run(&mut terminal, oid_tree, mib_files, &app_config).await });
 
     // Restore terminal
     restore_terminal()?;
@@ -68,9 +71,10 @@ fn restore_terminal() -> io::Result<()> {
 async fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     oid_tree: mib_parser::OidTree,
+    mib_files: Vec<MibFileEntry>,
     app_config: &config::AppConfig,
 ) -> io::Result<()> {
-    let mut app = App::new(oid_tree, app_config);
+    let mut app = App::new(oid_tree, mib_files, app_config);
 
     // Initialize SNMP worker
     app.init_worker(app_config.debug);
@@ -98,15 +102,34 @@ async fn run(
     Ok(())
 }
 
-fn load_mibs(config: &config::AppConfig) -> mib_parser::OidTree {
+fn debug_log_warning(msg: &str) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open("/tmp/snmp-tui-debug.log")
+    {
+        let _ = writeln!(f, "[WARN] {}", msg);
+    }
+}
+
+fn load_mibs(config: &config::AppConfig) -> (mib_parser::OidTree, Vec<MibFileEntry>) {
     let bundled_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("mib-parser")
         .join("mibs");
 
-    let mut mib_paths: Vec<PathBuf> = Vec::new();
+    // Collect (path, is_bundled) pairs — with canonical-path dedup.
+    let mut path_infos: Vec<(PathBuf, bool)> = Vec::new();
+    let mut seen_canonical: HashSet<PathBuf> = HashSet::new();
 
-    // Load bundled MIBs
+    let mut add_path = |path: PathBuf, is_bundled: bool| {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if seen_canonical.insert(canonical) {
+            path_infos.push((path, is_bundled));
+        }
+    };
+
+    // Bundled MIBs
     if bundled_dir.exists() {
         let bundled_files = [
             "SNMPv2-SMI.txt",
@@ -127,12 +150,12 @@ fn load_mibs(config: &config::AppConfig) -> mib_parser::OidTree {
         for name in &bundled_files {
             let path = bundled_dir.join(name);
             if path.exists() {
-                mib_paths.push(path);
+                add_path(path, true);
             }
         }
     }
 
-    // Load MIBs from standard system directories (Linux)
+    // System MIB directories
     let system_mib_dirs = ["/usr/share/snmp/mibs", "/usr/local/share/snmp/mibs"];
     for dir in &system_mib_dirs {
         let dir = PathBuf::from(dir);
@@ -140,36 +163,114 @@ fn load_mibs(config: &config::AppConfig) -> mib_parser::OidTree {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file() {
-                    mib_paths.push(path);
+                    add_path(path, false);
                 }
             }
         }
     }
 
-    // Load MIBs from config directories
+    // Config directories
     for dir in &config.mib_dirs {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file() {
-                    mib_paths.push(path);
+                    add_path(path, false);
                 }
             }
         }
     }
 
-    // Load individual MIB files from config
+    // Individual config files
     for file in &config.mib_files {
         if file.exists() {
-            mib_paths.push(file.clone());
+            add_path(file.clone(), false);
         }
     }
 
-    match mib_parser::load_mibs(&mib_paths) {
-        Ok(tree) => tree,
-        Err(e) => {
-            eprintln!("Warning: Failed to load MIBs: {}", e);
-            mib_parser::OidTree::new()
+    let paths: Vec<PathBuf> = path_infos.iter().map(|(p, _)| p.clone()).collect();
+    let (all_modules, warnings) = mib_parser::load_mibs_tolerant(&paths);
+
+    for warning in &warnings {
+        if config.debug {
+            debug_log_warning(warning);
         }
     }
+
+    // Build error map from warning messages.
+    let mut error_map: HashMap<String, MibFileStatus> = HashMap::new();
+    for warning in &warnings {
+        if let Some(rest) = warning.strip_prefix("Failed to read ")
+            && let Some(colon_pos) = rest.find(": ")
+        {
+            error_map.insert(
+                rest[..colon_pos].to_string(),
+                MibFileStatus::ReadError(rest[colon_pos + 2..].to_string()),
+            );
+        } else if let Some(rest) = warning.strip_prefix("Skipping ")
+            && let Some(parse_pos) = rest.find(" (parse error): ")
+        {
+            error_map.insert(
+                rest[..parse_pos].to_string(),
+                MibFileStatus::ParseError(rest[parse_pos + 16..].to_string()),
+            );
+        }
+    }
+
+    // Build per-path module info from successfully parsed modules.
+    let mut path_modules: HashMap<String, (Vec<String>, usize)> = HashMap::new();
+    for module in &all_modules {
+        let entry = path_modules
+            .entry(module.source_file.clone())
+            .or_insert((Vec::new(), 0));
+        if !entry.0.contains(&module.name) {
+            entry.0.push(module.name.clone());
+        }
+        entry.1 += module.objects.len();
+    }
+
+    // Build MibFileEntry list.
+    let mib_file_entries: Vec<MibFileEntry> = path_infos
+        .iter()
+        .map(|(path, is_bundled)| {
+            let path_str = path.display().to_string();
+            if let Some(err_status) = error_map.get(&path_str) {
+                MibFileEntry {
+                    path: path.clone(),
+                    modules: Vec::new(),
+                    object_count: 0,
+                    status: err_status.clone(),
+                    is_bundled: *is_bundled,
+                }
+            } else if let Some((modules, count)) = path_modules.get(&path_str) {
+                MibFileEntry {
+                    path: path.clone(),
+                    modules: modules.clone(),
+                    object_count: *count,
+                    status: MibFileStatus::Loaded,
+                    is_bundled: *is_bundled,
+                }
+            } else {
+                MibFileEntry {
+                    path: path.clone(),
+                    modules: Vec::new(),
+                    object_count: 0,
+                    status: MibFileStatus::ParseError("Unknown error".to_string()),
+                    is_bundled: *is_bundled,
+                }
+            }
+        })
+        .collect();
+
+    let tree = match mib_parser::build_tree_from_modules(&all_modules) {
+        Ok(tree) => tree,
+        Err(e) => {
+            if config.debug {
+                debug_log_warning(&format!("Failed to build MIB tree: {}", e));
+            }
+            mib_parser::OidTree::new()
+        }
+    };
+
+    (tree, mib_file_entries)
 }

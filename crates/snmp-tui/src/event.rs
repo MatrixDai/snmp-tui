@@ -56,7 +56,7 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
     match key.code {
         KeyCode::Char('q') => return Some(Message::Quit),
         KeyCode::Char('c') => return Some(Message::OpenConnectionManager),
-        KeyCode::Char('m') => return Some(Message::OpenMibInfoModal),
+        KeyCode::Char('m') => return Some(Message::OpenMibManager),
         KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             return Some(Message::ClearResults);
         }
@@ -68,6 +68,8 @@ fn handle_key_event(key: KeyEvent, app: &App) -> Option<Message> {
             };
         }
         KeyCode::BackTab => return Some(Message::FocusPrev),
+        KeyCode::Char(']') => return Some(Message::PanelGrow),
+        KeyCode::Char('[') => return Some(Message::PanelShrink),
         _ => {}
     }
 
@@ -220,14 +222,8 @@ fn modal_accepts_text_input(app: &App) -> bool {
         Some(Modal::Search(_)) => true,
         // ConnMgr: only when the edit sub-view is open
         Some(Modal::ConnectionManager(mgr)) => mgr.edit_view.is_some(),
-        // MibInfo: only when the search bar is active
-        Some(Modal::MibInfo(m)) => {
-            m.search_active
-                || m.object_view
-                    .as_ref()
-                    .map(|ov| ov.search_active)
-                    .unwrap_or(false)
-        }
+        // MibManager: depends on current sub-view
+        Some(Modal::MibManager(m)) => m.is_text_input_mode(),
         // TableColumnSelect: no text input (j/k/g/G are navigation)
         Some(Modal::TableColumnSelect(_)) => false,
         // TableView and None: no text input

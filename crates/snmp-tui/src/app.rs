@@ -1,3 +1,6 @@
+use std::collections::{HashMap, HashSet};
+use std::io::Write;
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 use mib_parser::OidTree;
@@ -6,9 +9,28 @@ use tokio::sync::mpsc;
 
 use crate::config::{self, ConnectionEntry};
 use crate::modal::{
-    ConnectionManagerModal, MibInfoModal, Modal, SearchModal, SetModal, SetNodeKind,
-    TableColumnSelectModal, TableViewModal,
+    ConnectionManagerModal, MibFileEntry, MibFileStatus, MibManagerModal, MibManagerView, Modal,
+    SearchModal, SetModal, SetNodeKind, TableColumnSelectModal, TableViewModal,
 };
+
+/// Append a warning message to the debug log file.
+fn debug_log_warning(msg: &str) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open("/tmp/snmp-tui-debug.log")
+    {
+        let _ = writeln!(f, "[WARN] {}", msg);
+    }
+}
+
+/// Actions dispatched from MIB Manager modal that need app-level execution.
+/// Extracted before releasing the modal borrow to avoid borrow conflicts.
+enum MibAction {
+    ReloadAll,
+    UnloadFile(PathBuf),
+    LoadPath(String),
+}
 
 /// SNMP query strategy determined from MIB object metadata.
 enum QueryStrategy {
@@ -92,7 +114,7 @@ pub enum Message {
     OpenConnectionManager,
     OpenSetModal,
     OpenSearchModal,
-    OpenMibInfoModal,
+    OpenMibManager,
     ToggleHelp,
     ClearResults,
     ModalClose,
@@ -120,6 +142,10 @@ pub enum Message {
     DetailSearchPrev,
     ResultsSearchNext,
     ResultsSearchPrev,
+
+    // Panel resizing
+    PanelGrow,
+    PanelShrink,
 
     // Prefix key handling
     /// First `g` press — wait for second key
@@ -404,6 +430,8 @@ impl std::fmt::Display for ConnectionState {
 pub struct App {
     pub focused: FocusedPanel,
     pub oid_tree: OidTree,
+    /// Canonical list of MIB files tracked across modal open/close cycles.
+    pub mib_files: Vec<MibFileEntry>,
     pub tree_state: TreeState,
     pub detail_state: DetailState,
     pub results_state: ResultsState,
@@ -444,6 +472,8 @@ pub struct App {
     pub connections: Vec<ConnectionEntry>,
     /// Last used connection alias.
     pub last_connection: Option<String>,
+    /// Debug mode — warnings are written to /tmp/snmp-tui-debug.log instead of stderr.
+    pub debug: bool,
     /// Whether we are waiting for a table walk response to populate the modal.
     pub pending_table_query: bool,
     /// Entry node index saved when table walk is launched (for response parsing).
@@ -452,6 +482,10 @@ pub struct App {
     pub pending_table_entry_oid: Option<mib_parser::Oid>,
     /// Columns selected by user in TableColumnSelectModal (used in walk response parsing).
     pub pending_table_columns: Vec<(u32, String)>,
+    /// Tree panel width as percentage of total width (15–70).
+    pub tree_width_percent: u16,
+    /// Detail panel height as percentage of right-side height (15–85).
+    pub detail_height_percent: u16,
     /// Index of the current in-progress streaming walk entry in results_state.entries.
     pub walk_in_progress_idx: Option<usize>,
     /// Accumulated results for in-progress table walk (streaming).
@@ -459,11 +493,16 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(oid_tree: OidTree, app_config: &config::AppConfig) -> Self {
+    pub fn new(
+        oid_tree: OidTree,
+        mib_files: Vec<MibFileEntry>,
+        app_config: &config::AppConfig,
+    ) -> Self {
         let tree_state = TreeState::new(&oid_tree);
         Self {
             focused: FocusedPanel::Tree,
             oid_tree,
+            mib_files,
             tree_state,
             detail_state: DetailState::new(),
             results_state: ResultsState::new(),
@@ -486,10 +525,13 @@ impl App {
             pending_connection_entry: None,
             connections: app_config.connections.clone(),
             last_connection: app_config.last_connection.clone(),
+            debug: app_config.debug,
             pending_table_query: false,
             pending_table_entry_idx: None,
             pending_table_entry_oid: None,
             pending_table_columns: Vec::new(),
+            tree_width_percent: 30,
+            detail_height_percent: 30,
             walk_in_progress_idx: None,
             pending_table_walk_results: Vec::new(),
         }
@@ -514,6 +556,140 @@ impl App {
             self.last_connection.clone(),
             is_startup,
         )));
+    }
+
+    /// Rebuild the OID tree from `self.mib_files`, updating statuses and resetting tree state.
+    pub fn rebuild_oid_tree(&mut self) {
+        let paths: Vec<PathBuf> = self.mib_files.iter().map(|e| e.path.clone()).collect();
+        let (all_modules, warnings) = mib_parser::load_mibs_tolerant(&paths);
+
+        for warning in &warnings {
+            if self.debug {
+                debug_log_warning(warning);
+            }
+        }
+
+        // Build a map from path string → error status from warning messages.
+        // Warning format: "Failed to read {path}: {err}" or "Skipping {path} (parse error): {err}"
+        let mut error_map: HashMap<String, MibFileStatus> = HashMap::new();
+        for warning in &warnings {
+            if let Some(rest) = warning.strip_prefix("Failed to read ")
+                && let Some(colon_pos) = rest.find(": ")
+            {
+                error_map.insert(
+                    rest[..colon_pos].to_string(),
+                    MibFileStatus::ReadError(rest[colon_pos + 2..].to_string()),
+                );
+            } else if let Some(rest) = warning.strip_prefix("Skipping ")
+                && let Some(parse_pos) = rest.find(" (parse error): ")
+            {
+                error_map.insert(
+                    rest[..parse_pos].to_string(),
+                    MibFileStatus::ParseError(rest[parse_pos + 16..].to_string()),
+                );
+            }
+        }
+
+        // Build per-path module info from successfully parsed modules.
+        let mut path_modules: HashMap<String, (Vec<String>, usize)> = HashMap::new();
+        for module in &all_modules {
+            let entry = path_modules
+                .entry(module.source_file.clone())
+                .or_insert((Vec::new(), 0));
+            if !entry.0.contains(&module.name) {
+                entry.0.push(module.name.clone());
+            }
+            entry.1 += module.objects.len();
+        }
+
+        // Update MibFileEntry statuses.
+        for entry in &mut self.mib_files {
+            let path_str = entry.path.display().to_string();
+            if let Some(err_status) = error_map.get(&path_str) {
+                entry.status = err_status.clone();
+                entry.modules = Vec::new();
+                entry.object_count = 0;
+            } else if let Some((modules, count)) = path_modules.get(&path_str) {
+                entry.status = MibFileStatus::Loaded;
+                entry.modules = modules.clone();
+                entry.object_count = *count;
+            }
+        }
+
+        // Build new tree.
+        self.oid_tree = match mib_parser::build_tree_from_modules(&all_modules) {
+            Ok(tree) => tree,
+            Err(e) => {
+                if self.debug {
+                    debug_log_warning(&format!("Failed to build MIB tree: {}", e));
+                }
+                mib_parser::OidTree::new()
+            }
+        };
+
+        // Reset tree state and clear pending navigation state.
+        self.tree_state = crate::tree_state::TreeState::new(&self.oid_tree);
+        self.prev_selected_node = None;
+        self.last_getnext_oid = None;
+        self.pending_table_entry_idx = None;
+        self.walk_in_progress_idx = None;
+        self.pending_table_walk_results.clear();
+    }
+
+    /// Reload all MIB files (file list unchanged).
+    pub fn mib_reload_all(&mut self) {
+        self.rebuild_oid_tree();
+    }
+
+    /// Remove a MIB file from the tracked list and rebuild.
+    pub fn mib_unload_file(&mut self, path: &PathBuf) {
+        self.mib_files.retain(|e| &e.path != path);
+        self.rebuild_oid_tree();
+    }
+
+    /// Add a path (file or directory) to the tracked list and rebuild.
+    pub fn mib_load_path(&mut self, path_str: &str) {
+        let path = PathBuf::from(path_str.trim());
+        // Build canonical-path set for existing files to detect symlink duplicates.
+        let existing_canonicals: HashSet<PathBuf> = self
+            .mib_files
+            .iter()
+            .map(|e| e.path.canonicalize().unwrap_or_else(|_| e.path.clone()))
+            .collect();
+
+        if path.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&path) {
+                for entry in entries.flatten() {
+                    let file_path = entry.path();
+                    if file_path.is_file() {
+                        let canonical = file_path
+                            .canonicalize()
+                            .unwrap_or_else(|_| file_path.clone());
+                        if !existing_canonicals.contains(&canonical) {
+                            self.mib_files.push(MibFileEntry {
+                                path: file_path,
+                                modules: Vec::new(),
+                                object_count: 0,
+                                status: MibFileStatus::ParseError("Pending".to_string()),
+                                is_bundled: false,
+                            });
+                        }
+                    }
+                }
+            }
+        } else if !path.as_os_str().is_empty() {
+            let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+            if !existing_canonicals.contains(&canonical) {
+                self.mib_files.push(MibFileEntry {
+                    path,
+                    modules: Vec::new(),
+                    object_count: 0,
+                    status: MibFileStatus::ParseError("Pending".to_string()),
+                    is_bundled: false,
+                });
+            }
+        }
+        self.rebuild_oid_tree();
     }
 
     /// Send a connect request to the SNMP worker.
@@ -1671,18 +1847,33 @@ impl App {
                         }
                         return;
                     }
-                    // MibInfo: Esc navigates back through layers
-                    Some(Modal::MibInfo(m)) => {
-                        if let Some(ref mut ov) = m.object_view {
-                            if ov.search_active {
-                                ov.deactivate_search();
-                            } else {
-                                m.close_object_view();
+                    // MibManager: Esc navigates back through layers
+                    Some(Modal::MibManager(m)) => {
+                        match m.view {
+                            MibManagerView::ObjectList => {
+                                if let Some(ref mut ov) = m.object_view {
+                                    if ov.search_active {
+                                        ov.deactivate_search();
+                                    } else {
+                                        m.close_object_view();
+                                    }
+                                }
                             }
-                        } else if m.search_active {
-                            m.deactivate_search();
-                        } else {
-                            self.modal = None;
+                            MibManagerView::FileList => {
+                                if m.search_active {
+                                    m.deactivate_search();
+                                } else {
+                                    self.modal = None;
+                                }
+                            }
+                            MibManagerView::LoadInput => {
+                                m.view = MibManagerView::FileList;
+                                m.load_input.clear();
+                            }
+                            MibManagerView::ConfirmUnload => {
+                                m.view = MibManagerView::FileList;
+                                m.unload_target = None;
+                            }
                         }
                         return;
                     }
@@ -1693,23 +1884,85 @@ impl App {
                 }
             }
             Message::ModalConfirm => {
+                // Extract deferred MibManager actions before the mutable borrow.
+                let mib_confirm_action: Option<MibAction> =
+                    if let Some(Modal::MibManager(ref m)) = self.modal {
+                        match m.view {
+                            MibManagerView::LoadInput => {
+                                Some(MibAction::LoadPath(m.load_input.clone()))
+                            }
+                            MibManagerView::ConfirmUnload => m
+                                .unload_target
+                                .filter(|&i| i < m.files.len())
+                                .map(|i| MibAction::UnloadFile(m.files[i].path.clone())),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+
                 match &mut self.modal {
                     Some(Modal::ConnectionManager(_)) => {
                         self.confirm_connection_manager();
                     }
                     Some(Modal::Set(_)) => self.confirm_set(),
                     Some(Modal::Search(_)) => self.confirm_search(),
-                    Some(Modal::MibInfo(m)) => {
-                        if m.search_active {
-                            m.search_active = false;
-                        } else if m.object_view.is_none() {
-                            let tree = &self.oid_tree;
-                            m.open_object_view(tree);
+                    Some(Modal::MibManager(m)) => match m.view {
+                        MibManagerView::FileList => {
+                            if m.search_active {
+                                m.search_active = false;
+                            } else {
+                                let tree = &self.oid_tree;
+                                m.open_object_view(tree);
+                            }
                         }
-                    }
+                        MibManagerView::ObjectList => {
+                            if let Some(ref mut ov) = m.object_view
+                                && ov.search_active
+                            {
+                                ov.search_active = false;
+                            }
+                        }
+                        _ => {} // LoadInput and ConfirmUnload handled by deferred action below
+                    },
                     Some(Modal::TableColumnSelect(_)) => self.confirm_table_column_select(),
                     Some(Modal::TableView(_)) => {}
                     None => {}
+                }
+
+                // Execute deferred MibManager actions (requires &mut self, done after borrow ends).
+                if let Some(action) = mib_confirm_action {
+                    match action {
+                        MibAction::LoadPath(path) => {
+                            self.mib_load_path(&path);
+                            let files = self.mib_files.clone();
+                            if let Some(Modal::MibManager(ref mut m)) = self.modal {
+                                m.view = MibManagerView::FileList;
+                                m.load_input.clear();
+                                m.refresh_files(files);
+                                m.feedback_message =
+                                    Some(("MIBs loaded successfully".to_string(), false));
+                            }
+                        }
+                        MibAction::UnloadFile(path) => {
+                            self.mib_unload_file(&path);
+                            let files = self.mib_files.clone();
+                            if let Some(Modal::MibManager(ref mut m)) = self.modal {
+                                m.view = MibManagerView::FileList;
+                                m.unload_target = None;
+                                m.refresh_files(files);
+                                m.feedback_message = Some(("MIB unloaded".to_string(), false));
+                            }
+                        }
+                        MibAction::ReloadAll => {
+                            self.mib_reload_all();
+                            let files = self.mib_files.clone();
+                            if let Some(Modal::MibManager(ref mut m)) = self.modal {
+                                m.refresh_files(files);
+                                m.feedback_message = Some(("MIBs reloaded".to_string(), false));
+                            }
+                        }
+                    }
                 }
                 return;
             }
@@ -1728,7 +1981,7 @@ impl App {
                     Some(Modal::Set(m)) => m.focus_next(),
                     Some(Modal::TableColumnSelect(_)) => {}
                     Some(Modal::TableView(_)) => {}
-                    Some(Modal::Search(_)) | Some(Modal::MibInfo(_)) => {}
+                    Some(Modal::Search(_)) | Some(Modal::MibManager(_)) => {}
                     None => {}
                 },
                 Message::ModalTabPrev => match &mut self.modal {
@@ -1740,65 +1993,148 @@ impl App {
                     Some(Modal::Set(m)) => m.focus_prev(),
                     Some(Modal::TableColumnSelect(_)) => {}
                     Some(Modal::TableView(_)) => {}
-                    Some(Modal::Search(_)) | Some(Modal::MibInfo(_)) => {}
+                    Some(Modal::Search(_)) | Some(Modal::MibManager(_)) => {}
                     None => {}
                 },
-                Message::ModalChar(c) => match &mut self.modal {
-                    Some(Modal::ConnectionManager(mgr)) => {
-                        if let Some(ref mut edit) = mgr.edit_view {
-                            edit.type_char(c);
+                Message::ModalChar(c) => {
+                    // Extract deferred MibManager actions before the mutable borrow.
+                    let mib_char_action: Option<MibAction> =
+                        if let Some(Modal::MibManager(ref m)) = self.modal {
+                            match m.view {
+                                MibManagerView::FileList if !m.search_active => match c {
+                                    'r' | 'R' => Some(MibAction::ReloadAll),
+                                    _ => None,
+                                },
+                                MibManagerView::ConfirmUnload if c == 'y' => m
+                                    .unload_target
+                                    .filter(|&i| i < m.files.len())
+                                    .map(|i| MibAction::UnloadFile(m.files[i].path.clone())),
+                                _ => None,
+                            }
                         } else {
-                            match c {
-                                'd' => mgr.delete_selected(),
-                                _ => {
-                                    mgr.cancel_pending_delete();
-                                    match c {
-                                        'j' => mgr.scroll_down(),
-                                        'k' => mgr.scroll_up(),
-                                        'n' => mgr.open_new(),
-                                        'e' => mgr.open_edit(),
-                                        _ => {}
+                            None
+                        };
+
+                    match &mut self.modal {
+                        Some(Modal::ConnectionManager(mgr)) => {
+                            if let Some(ref mut edit) = mgr.edit_view {
+                                edit.type_char(c);
+                            } else {
+                                match c {
+                                    'd' => mgr.delete_selected(),
+                                    _ => {
+                                        mgr.cancel_pending_delete();
+                                        match c {
+                                            'j' => mgr.scroll_down(),
+                                            'k' => mgr.scroll_up(),
+                                            'n' => mgr.open_new(),
+                                            'e' => mgr.open_edit(),
+                                            _ => {}
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                    Some(Modal::Set(m)) => m.type_char(c),
-                    Some(Modal::Search(m)) => {
-                        let tree = &self.oid_tree;
-                        m.type_char(c, tree);
-                    }
-                    Some(Modal::MibInfo(m)) => {
-                        if let Some(ref mut ov) = m.object_view {
-                            if ov.search_active {
-                                ov.search_char(c);
-                            } else {
-                                match c {
-                                    'j' => ov.scroll_down(),
-                                    'k' => ov.scroll_up(),
-                                    '/' => ov.activate_search(),
-                                    _ => {}
+                        Some(Modal::Set(m)) => m.type_char(c),
+                        Some(Modal::Search(m)) => {
+                            let tree = &self.oid_tree;
+                            m.type_char(c, tree);
+                        }
+                        Some(Modal::MibManager(m)) => match m.view {
+                            MibManagerView::FileList => {
+                                if m.search_active {
+                                    m.search_char(c);
+                                } else {
+                                    match c {
+                                        'j' => m.scroll_down(),
+                                        'k' => m.scroll_up(),
+                                        '/' => m.activate_search(),
+                                        'u' => {
+                                            if !m.selected_file_is_bundled()
+                                                && let Some(&idx) = m.filtered.get(m.selected)
+                                            {
+                                                m.unload_target = Some(idx);
+                                                m.view = MibManagerView::ConfirmUnload;
+                                            }
+                                        }
+                                        'a' => {
+                                            m.load_input.clear();
+                                            m.view = MibManagerView::LoadInput;
+                                        }
+                                        'r' | 'R' => {} // handled by deferred action
+                                        _ => {}
+                                    }
                                 }
                             }
-                        } else if m.search_active {
-                            m.search_char(c);
-                        } else {
-                            match c {
-                                'j' => m.scroll_down(),
-                                'k' => m.scroll_up(),
-                                '/' => m.activate_search(),
-                                _ => {}
+                            MibManagerView::ObjectList => {
+                                if let Some(ref mut ov) = m.object_view {
+                                    if ov.search_active {
+                                        ov.search_char(c);
+                                    } else {
+                                        match c {
+                                            'j' => ov.scroll_down(),
+                                            'k' => ov.scroll_up(),
+                                            '/' => ov.activate_search(),
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+                            MibManagerView::LoadInput => {
+                                m.load_input.push(c);
+                            }
+                            MibManagerView::ConfirmUnload => {
+                                if c == 'n' {
+                                    m.view = MibManagerView::FileList;
+                                    m.unload_target = None;
+                                }
+                                // 'y' handled by deferred action
+                            }
+                        },
+                        Some(Modal::TableColumnSelect(m)) => {
+                            if c == ' ' {
+                                m.toggle();
+                            }
+                        }
+                        Some(Modal::TableView(_)) => {}
+                        None => {}
+                    }
+
+                    // Execute deferred MibManager actions.
+                    if let Some(action) = mib_char_action {
+                        match action {
+                            MibAction::ReloadAll => {
+                                self.mib_reload_all();
+                                let files = self.mib_files.clone();
+                                if let Some(Modal::MibManager(ref mut m)) = self.modal {
+                                    m.refresh_files(files);
+                                    m.feedback_message = Some(("MIBs reloaded".to_string(), false));
+                                }
+                            }
+                            MibAction::UnloadFile(path) => {
+                                self.mib_unload_file(&path);
+                                let files = self.mib_files.clone();
+                                if let Some(Modal::MibManager(ref mut m)) = self.modal {
+                                    m.view = MibManagerView::FileList;
+                                    m.unload_target = None;
+                                    m.refresh_files(files);
+                                    m.feedback_message = Some(("MIB unloaded".to_string(), false));
+                                }
+                            }
+                            MibAction::LoadPath(path) => {
+                                self.mib_load_path(&path);
+                                let files = self.mib_files.clone();
+                                if let Some(Modal::MibManager(ref mut m)) = self.modal {
+                                    m.view = MibManagerView::FileList;
+                                    m.load_input.clear();
+                                    m.refresh_files(files);
+                                    m.feedback_message =
+                                        Some(("MIBs loaded successfully".to_string(), false));
+                                }
                             }
                         }
                     }
-                    Some(Modal::TableColumnSelect(m)) => {
-                        if c == ' ' {
-                            m.toggle();
-                        }
-                    }
-                    Some(Modal::TableView(_)) => {}
-                    None => {}
-                },
+                }
                 Message::ModalBackspace => match &mut self.modal {
                     Some(Modal::ConnectionManager(mgr)) => {
                         if let Some(ref mut edit) = mgr.edit_view {
@@ -1810,15 +2146,24 @@ impl App {
                         let tree = &self.oid_tree;
                         m.backspace(tree);
                     }
-                    Some(Modal::MibInfo(m)) => {
-                        if let Some(ref mut ov) = m.object_view {
-                            if ov.search_active {
+                    Some(Modal::MibManager(m)) => match m.view {
+                        MibManagerView::FileList => {
+                            if m.search_active {
+                                m.search_backspace();
+                            }
+                        }
+                        MibManagerView::ObjectList => {
+                            if let Some(ref mut ov) = m.object_view
+                                && ov.search_active
+                            {
                                 ov.search_backspace();
                             }
-                        } else if m.search_active {
-                            m.search_backspace();
                         }
-                    }
+                        MibManagerView::LoadInput => {
+                            m.load_input.pop();
+                        }
+                        MibManagerView::ConfirmUnload => {}
+                    },
                     Some(Modal::TableColumnSelect(_)) => {}
                     Some(Modal::TableView(_)) => {}
                     None => {}
@@ -1832,13 +2177,15 @@ impl App {
                             mgr.scroll_down();
                         }
                     }
-                    Some(Modal::MibInfo(m)) => {
-                        if let Some(ref mut ov) = m.object_view {
-                            ov.scroll_down();
-                        } else {
-                            m.scroll_down();
+                    Some(Modal::MibManager(m)) => match m.view {
+                        MibManagerView::FileList => m.scroll_down(),
+                        MibManagerView::ObjectList => {
+                            if let Some(ref mut ov) = m.object_view {
+                                ov.scroll_down();
+                            }
                         }
-                    }
+                        _ => {}
+                    },
                     Some(Modal::TableColumnSelect(m)) => m.scroll_down(),
                     Some(Modal::TableView(m)) => m.scroll_down(),
                     _ => {}
@@ -1852,13 +2199,15 @@ impl App {
                             mgr.scroll_up();
                         }
                     }
-                    Some(Modal::MibInfo(m)) => {
-                        if let Some(ref mut ov) = m.object_view {
-                            ov.scroll_up();
-                        } else {
-                            m.scroll_up();
+                    Some(Modal::MibManager(m)) => match m.view {
+                        MibManagerView::FileList => m.scroll_up(),
+                        MibManagerView::ObjectList => {
+                            if let Some(ref mut ov) = m.object_view {
+                                ov.scroll_up();
+                            }
                         }
-                    }
+                        _ => {}
+                    },
                     Some(Modal::TableColumnSelect(m)) => m.scroll_up(),
                     Some(Modal::TableView(m)) => m.scroll_up(),
                     _ => {}
@@ -1874,11 +2223,13 @@ impl App {
                     }
                 }
                 Message::ModalJumpTop => match &mut self.modal {
+                    Some(Modal::MibManager(m)) => m.jump_top(),
                     Some(Modal::TableColumnSelect(m)) => m.jump_top(),
                     Some(Modal::TableView(m)) => m.jump_top(),
                     _ => {}
                 },
                 Message::ModalJumpBottom => match &mut self.modal {
+                    Some(Modal::MibManager(m)) => m.jump_bottom(),
                     Some(Modal::TableColumnSelect(m)) => m.jump_bottom(),
                     Some(Modal::TableView(m)) => m.jump_bottom(),
                     _ => {}
@@ -1970,8 +2321,9 @@ impl App {
             Message::OpenSearchModal => {
                 self.modal = Some(Modal::Search(SearchModal::new()));
             }
-            Message::OpenMibInfoModal => {
-                self.modal = Some(Modal::MibInfo(MibInfoModal::new(&self.oid_tree)));
+            Message::OpenMibManager => {
+                let files = self.mib_files.clone();
+                self.modal = Some(Modal::MibManager(MibManagerModal::new(files)));
             }
             Message::CopyTreeNode => {
                 self.copy_tree_node();
@@ -2053,6 +2405,30 @@ impl App {
             Message::PrefixG => {
                 self.pending_g = true;
             }
+            Message::PanelGrow => match self.focused {
+                FocusedPanel::Tree => {
+                    self.tree_width_percent = (self.tree_width_percent + 5).min(70);
+                }
+                FocusedPanel::Detail => {
+                    self.detail_height_percent = (self.detail_height_percent + 5).min(85);
+                }
+                FocusedPanel::Results => {
+                    self.detail_height_percent =
+                        self.detail_height_percent.saturating_sub(5).max(15);
+                }
+            },
+            Message::PanelShrink => match self.focused {
+                FocusedPanel::Tree => {
+                    self.tree_width_percent = self.tree_width_percent.saturating_sub(5).max(15);
+                }
+                FocusedPanel::Detail => {
+                    self.detail_height_percent =
+                        self.detail_height_percent.saturating_sub(5).max(15);
+                }
+                FocusedPanel::Results => {
+                    self.detail_height_percent = (self.detail_height_percent + 5).min(85);
+                }
+            },
             Message::Quit => {
                 self.running = false;
             }
@@ -2110,7 +2486,7 @@ mod tests {
     fn detail_state_reset_on_node_change() {
         let tree = make_test_tree();
         let config = make_test_config();
-        let mut app = App::new(tree, &config);
+        let mut app = App::new(tree, Vec::new(), &config);
 
         // Expand iso to show org
         app.update(Message::TreeExpand);
@@ -2169,7 +2545,7 @@ mod tests {
     fn result_entry_push() {
         let tree = make_test_tree();
         let config = make_test_config();
-        let mut app = App::new(tree, &config);
+        let mut app = App::new(tree, Vec::new(), &config);
         app.connection = ConnectionState::Connected {
             alias: "test".to_string(),
             host: "10.0.0.1:161".to_string(),
