@@ -723,7 +723,7 @@ fn status_line2(app: &App) -> Line<'static> {
                 }
             }
             Modal::Set(_) => " [Tab] Next field  [Enter] Send SET  [Esc] Cancel",
-            Modal::Search(_) => " [Enter] Navigate to  [Up/Down] Select  [Esc] Cancel",
+            Modal::Search(_) => " [Enter] Navigate  [↑/↓] Select  [PgUp/PgDn] Page  [Esc] Cancel",
             Modal::MibManager(_) => {
                 " [j/k] Nav  [Enter] View  [r] Reload  [R] All  [u] Unload  [a] Add  [/] Search  [Esc] Close"
             }
@@ -1172,7 +1172,7 @@ fn draw_set_modal(frame: &mut Frame, modal: &crate::modal::SetModal) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-fn draw_search_modal(frame: &mut Frame, modal: &crate::modal::SearchModal) {
+fn draw_search_modal(frame: &mut Frame, modal: &mut crate::modal::SearchModal) {
     let area = centered_rect(60, 70, frame.area());
     frame.render_widget(Clear, area);
 
@@ -1191,8 +1191,19 @@ fn draw_search_modal(frame: &mut Frame, modal: &crate::modal::SearchModal) {
     let selected_style = Style::default().fg(Color::Black).bg(Color::Cyan);
     let dim_style = Style::default().fg(Color::Gray);
     let oid_style = Style::default().fg(Color::Gray);
+    let index_style = Style::default().fg(Color::DarkGray);
 
-    let mut lines = vec![
+    let viewport_height = inner.height as usize;
+    // Header: search input + blank + match count + blank = 4 lines
+    // Footer: hint line = 1 line
+    let header_lines = 4usize;
+    let footer_lines = 1usize;
+    let list_height = viewport_height.saturating_sub(header_lines + footer_lines);
+
+    // Update modal viewport_height so scroll calculations work correctly.
+    modal.viewport_height = list_height;
+
+    let mut lines: Vec<Line<'_>> = vec![
         Line::from(vec![
             Span::styled("  Search:  ", label_style),
             Span::styled(format!("{}_", modal.query), focused_style),
@@ -1203,11 +1214,15 @@ fn draw_search_modal(frame: &mut Frame, modal: &crate::modal::SearchModal) {
     if modal.results.is_empty() {
         if modal.query.is_empty() {
             lines.push(Line::from(Span::styled(
-                "  Type to search MIB object names",
+                "  Type to search by name, OID, or description",
                 dim_style,
             )));
         } else {
             lines.push(Line::from(Span::styled("  No matches found", dim_style)));
+        }
+        // Fill empty space
+        while lines.len() < viewport_height.saturating_sub(footer_lines) {
+            lines.push(Line::from(""));
         }
     } else {
         lines.push(Line::from(Span::styled(
@@ -1216,33 +1231,42 @@ fn draw_search_modal(frame: &mut Frame, modal: &crate::modal::SearchModal) {
         )));
         lines.push(Line::from(""));
 
-        for (i, result) in modal.results.iter().enumerate() {
+        // Render only visible results using scroll_offset
+        for (i, result) in modal
+            .results
+            .iter()
+            .enumerate()
+            .skip(modal.scroll_offset)
+            .take(list_height)
+        {
             let is_selected = i == modal.selected;
             let style = if is_selected {
                 selected_style
             } else {
                 value_style
             };
-            let prefix = if is_selected { "> " } else { "  " };
+            let prefix = if is_selected { ">" } else { " " };
+            let idx_str = format!("{:>3}.", i + 1);
 
             lines.push(Line::from(vec![
-                Span::styled(format!("{}{}", prefix, result.name), style),
-                Span::styled(format!("  ({})", result.oid), oid_style),
+                Span::styled(format!("{}{} ", prefix, idx_str), index_style),
+                Span::styled(result.name.clone(), style),
+                Span::styled(format!("  {}", result.oid), oid_style),
             ]));
+        }
+
+        // Fill remaining space
+        while lines.len() < viewport_height.saturating_sub(footer_lines) {
+            lines.push(Line::from(""));
         }
     }
 
     // Hint at bottom
-    let viewport_height = inner.height as usize;
-    while lines.len() < viewport_height.saturating_sub(1) {
-        lines.push(Line::from(""));
-    }
     lines.push(Line::from(Span::styled(
-        "  [Enter] Navigate to  [Up/Down] Select  [Esc] Cancel",
+        "  [Enter] Navigate  [↑/↓] Select  [PgUp/PgDn] Page  [Esc] Cancel",
         dim_style,
     )));
 
-    // Truncate to viewport
     lines.truncate(viewport_height);
 
     frame.render_widget(Paragraph::new(lines), inner);

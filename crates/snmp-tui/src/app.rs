@@ -129,6 +129,8 @@ pub enum Message {
     ModalRight,
     ModalJumpTop,
     ModalJumpBottom,
+    ModalPageUp,
+    ModalPageDown,
 
     // Inline search (Detail/Results panels)
     InlineSearchOpen,
@@ -2223,17 +2225,29 @@ impl App {
                     }
                 }
                 Message::ModalJumpTop => match &mut self.modal {
+                    Some(Modal::Search(m)) => m.jump_top(),
                     Some(Modal::MibManager(m)) => m.jump_top(),
                     Some(Modal::TableColumnSelect(m)) => m.jump_top(),
                     Some(Modal::TableView(m)) => m.jump_top(),
                     _ => {}
                 },
                 Message::ModalJumpBottom => match &mut self.modal {
+                    Some(Modal::Search(m)) => m.jump_bottom(),
                     Some(Modal::MibManager(m)) => m.jump_bottom(),
                     Some(Modal::TableColumnSelect(m)) => m.jump_bottom(),
                     Some(Modal::TableView(m)) => m.jump_bottom(),
                     _ => {}
                 },
+                Message::ModalPageUp => {
+                    if let Some(Modal::Search(m)) = &mut self.modal {
+                        m.page_up();
+                    }
+                }
+                Message::ModalPageDown => {
+                    if let Some(Modal::Search(m)) = &mut self.modal {
+                        m.page_down();
+                    }
+                }
                 Message::TableRefresh => {
                     self.refresh_table_view();
                 }
