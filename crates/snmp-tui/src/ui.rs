@@ -1220,10 +1220,6 @@ fn draw_search_modal(frame: &mut Frame, modal: &mut crate::modal::SearchModal) {
         } else {
             lines.push(Line::from(Span::styled("  No matches found", dim_style)));
         }
-        // Fill empty space
-        while lines.len() < viewport_height.saturating_sub(footer_lines) {
-            lines.push(Line::from(""));
-        }
     } else {
         lines.push(Line::from(Span::styled(
             format!("  {} match(es):", modal.results.len()),
@@ -1254,11 +1250,11 @@ fn draw_search_modal(frame: &mut Frame, modal: &mut crate::modal::SearchModal) {
                 Span::styled(format!("  {}", result.oid), oid_style),
             ]));
         }
+    }
 
-        // Fill remaining space
-        while lines.len() < viewport_height.saturating_sub(footer_lines) {
-            lines.push(Line::from(""));
-        }
+    // Fill remaining space (unified for both empty and non-empty cases)
+    while lines.len() < viewport_height.saturating_sub(footer_lines) {
+        lines.push(Line::from(""));
     }
 
     // Hint at bottom
