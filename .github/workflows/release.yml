@@ -110,13 +110,12 @@ jobs:
       - name: Update Homebrew formula
         env:
           HOMEBREW_TOKEN: ${{ secrets.HOMEBREW_TOKEN }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          INTEL_SHA: ${{ steps.meta.outputs.intel_sha }}
+          ARM_SHA: ${{ steps.meta.outputs.arm_sha }}
         run: |
           git clone https://x-access-token:${HOMEBREW_TOKEN}@github.com/MatrixDai/homebrew-tap.git
           cd homebrew-tap
-
-          VERSION="${{ steps.meta.outputs.version }}"
-          INTEL_SHA="${{ steps.meta.outputs.intel_sha }}"
-          ARM_SHA="${{ steps.meta.outputs.arm_sha }}"
 
           python3 - <<'EOF'
           import re, os
@@ -145,7 +144,3 @@ jobs:
           git add Formula/snmp-tui.rb
           git commit -m "Update snmp-tui to ${VERSION}"
           git push
-        env:
-          VERSION: ${{ steps.meta.outputs.version }}
-          INTEL_SHA: ${{ steps.meta.outputs.intel_sha }}
-          ARM_SHA: ${{ steps.meta.outputs.arm_sha }}
