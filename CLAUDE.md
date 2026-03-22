@@ -2,7 +2,7 @@
 
 ## Claude Skill
 
-This project uses the **`snmp-tui-dev`** Claude Code skill. If it is available in your skill list, use it — it contains detailed architecture notes, build commands, crate roles, and development context for this workspace.
+This project bundles the **`snmp-tui-dev`** Claude Code skill at `.claude/skills/snmp-tui-dev/`. It is automatically loaded in every session and contains detailed architecture notes, build commands, and development context.
 
 Interactive TUI tool for SNMP MIB exploration and device inspection, written in Rust.
 
@@ -14,6 +14,7 @@ cargo test                 # run all tests
 cargo test -p mib-parser   # test single crate
 cargo clippy -- -D warnings
 cargo fmt --check
+make all                   # full pre-commit check (fmt + clippy + test + build)
 ```
 
 ## Workspace Structure
@@ -29,18 +30,6 @@ Cargo workspace with 3 crates under `crates/`:
 - **OID tree**: arena-based (Vec<Node> with index references) — shared between parser output and TUI display
 - **Async model**: TUI runs on main thread; SNMP operations run on tokio runtime via mpsc channels (request/response pattern)
 - **TUI layout**: three panels — MIB tree browser (left), object detail view (top-right), query results (bottom-right)
-
-## Key Dependencies
-
-| Crate | Purpose |
-|-------|---------|
-| ratatui 0.30+ | TUI framework |
-| crossterm | Terminal backend |
-| snmp2 | SNMP v1/v2c/v3 protocol |
-| pest | PEG parser generator for MIB grammar |
-| tokio | Async runtime for SNMP I/O |
-| clap | CLI argument parsing |
-| serde + toml | Config file handling |
 
 ## Workflow Rules
 
