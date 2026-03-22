@@ -6,7 +6,7 @@ build:
 	cargo build
 
 test:
-	cargo test
+	RUST_MIN_STACK=8388608 cargo test
 
 clippy:
 	cargo clippy -- -D warnings
