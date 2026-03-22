@@ -10,16 +10,6 @@ use crate::types::{Access, MibObject, Status, Syntax};
 #[grammar = "grammar.pest"]
 struct MibParser;
 
-/// A parsed MIB module with its definitions and import dependencies.
-#[derive(Debug, Clone)]
-pub struct ParsedModule {
-    pub name: String,
-    pub objects: Vec<MibObject>,
-    pub imports: Vec<ImportClause>,
-    /// OID assignments: name -> parent chain (for resolving symbolic OIDs)
-    pub oid_assignments: HashMap<String, Vec<OidComponent>>,
-}
-
 /// An import clause: symbols imported FROM a module.
 #[derive(Debug, Clone)]
 pub struct ImportClause {
@@ -33,62 +23,6 @@ pub enum OidComponent {
     NameAndNumber(String, u32),
     NumberOnly(u32),
     NameOnly(String),
-}
-
-/// Parse a MIB file source string into a list of modules.
-pub fn parse_mib(source: &str) -> Result<Vec<ParsedModule>, ParseError> {
-    let pairs =
-        MibParser::parse(Rule::mib_file, source).map_err(|e| ParseError::Grammar(e.to_string()))?;
-
-    let mut modules = Vec::new();
-
-    for pair in pairs {
-        if pair.as_rule() == Rule::mib_file {
-            for inner in pair.into_inner() {
-                if inner.as_rule() == Rule::module_definition {
-                    modules.push(parse_module_definition(inner)?);
-                }
-            }
-        }
-    }
-
-    Ok(modules)
-}
-
-fn parse_module_definition(pair: pest::iterators::Pair<Rule>) -> Result<ParsedModule, ParseError> {
-    let mut name = String::new();
-    let mut objects = Vec::new();
-    let mut imports = Vec::new();
-    let mut oid_assignments: HashMap<String, Vec<OidComponent>> = HashMap::new();
-
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::module_name => {
-                name = inner.as_str().to_string();
-            }
-            Rule::module_body => {
-                for body_item in inner.into_inner() {
-                    match body_item.as_rule() {
-                        Rule::imports_section => {
-                            imports = parse_imports(body_item);
-                        }
-                        Rule::assignment => {
-                            parse_assignment(body_item, &name, &mut objects, &mut oid_assignments);
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Ok(ParsedModule {
-        name,
-        objects,
-        imports,
-        oid_assignments,
-    })
 }
 
 fn parse_imports(pair: pest::iterators::Pair<Rule>) -> Vec<ImportClause> {
@@ -123,72 +57,6 @@ fn parse_imports(pair: pest::iterators::Pair<Rule>) -> Vec<ImportClause> {
     }
 
     clauses
-}
-
-fn parse_assignment(
-    pair: pest::iterators::Pair<Rule>,
-    module_name: &str,
-    objects: &mut Vec<MibObject>,
-    oid_assignments: &mut HashMap<String, Vec<OidComponent>>,
-) {
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::module_identity_def => {
-                if let Some(obj) = parse_module_identity(inner, module_name) {
-                    let name = obj.name.clone();
-                    oid_assignments.insert(name, extract_oid_components_from_object(&obj));
-                    objects.push(obj);
-                }
-            }
-            Rule::object_type_def => {
-                if let Some(obj) = parse_object_type(inner, module_name) {
-                    let name = obj.name.clone();
-                    oid_assignments.insert(name, extract_oid_components_from_object(&obj));
-                    objects.push(obj);
-                }
-            }
-            Rule::object_identity_def => {
-                if let Some(obj) = parse_object_identity(inner, module_name) {
-                    let name = obj.name.clone();
-                    oid_assignments.insert(name, extract_oid_components_from_object(&obj));
-                    objects.push(obj);
-                }
-            }
-            Rule::textual_convention_def => {
-                if let Some(obj) = parse_textual_convention(inner, module_name) {
-                    objects.push(obj);
-                }
-            }
-            Rule::object_identifier_assignment => {
-                if let Some((obj_name, components)) =
-                    parse_oid_assignment(inner, module_name, objects)
-                {
-                    oid_assignments.insert(obj_name, components);
-                }
-            }
-            Rule::notification_type_def
-            | Rule::object_group_def
-            | Rule::module_compliance_def
-            | Rule::notification_group_def
-            | Rule::agent_capabilities_def => {
-                if let Some(obj) = parse_generic_def_with_oid(inner, module_name) {
-                    let name = obj.name.clone();
-                    oid_assignments.insert(name, extract_oid_components_from_object(&obj));
-                    objects.push(obj);
-                }
-            }
-            Rule::trap_type_def => {
-                // SMIv1 TRAP-TYPE — skip for now
-            }
-            Rule::type_assignment => {
-                // Sequence definitions — handled separately if needed
-            }
-            Rule::value_assignment | Rule::macro_definition => {
-                // Skip
-            }
-            _ => {}
-        }
-    }
 }
 
 // ---- Helpers to extract data from parse tree ----
@@ -240,15 +108,6 @@ fn parse_oid_value(pair: pest::iterators::Pair<Rule>) -> RawOidValue {
     }
 
     RawOidValue { components }
-}
-
-fn extract_oid_components_from_object(obj: &MibObject) -> Vec<OidComponent> {
-    // Convert back from resolved OID — this is a fallback; we store raw during parse
-    obj.oid
-        .components()
-        .iter()
-        .map(|&c| OidComponent::NumberOnly(c))
-        .collect()
 }
 
 fn parse_quoted_string(s: &str) -> String {
@@ -422,176 +281,6 @@ fn parse_status_value(s: &str) -> Status {
 
 // ---- Module-level definition parsers ----
 
-fn parse_module_identity(
-    pair: pest::iterators::Pair<Rule>,
-    module_name: &str,
-) -> Option<MibObject> {
-    let mut obj_name = String::new();
-    let mut description = None;
-
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::identifier => {
-                if obj_name.is_empty() {
-                    obj_name = inner.as_str().to_string();
-                }
-            }
-            Rule::description_clause => {
-                for part in inner.into_inner() {
-                    if part.as_rule() == Rule::quoted_string {
-                        description = Some(parse_quoted_string(part.as_str()));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Some(MibObject {
-        name: obj_name,
-        oid: Oid::new(Vec::new()), // resolved later
-        module: module_name.to_string(),
-        source_file: String::new(),
-        syntax: None,
-        access: None,
-        status: Some(Status::Current),
-        description,
-        index_clause: None,
-        defval: None,
-    })
-}
-
-fn parse_object_type(pair: pest::iterators::Pair<Rule>, module_name: &str) -> Option<MibObject> {
-    let mut obj_name = String::new();
-    let mut syntax = None;
-    let mut access = None;
-    let mut status = None;
-    let mut description = None;
-    let mut index_clause = None;
-    let mut defval = None;
-
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::identifier => {
-                if obj_name.is_empty() {
-                    obj_name = inner.as_str().to_string();
-                }
-            }
-            Rule::syntax_clause => {
-                for part in inner.into_inner() {
-                    if part.as_rule() == Rule::syntax_type {
-                        syntax = Some(parse_syntax_type(part));
-                    }
-                }
-            }
-            Rule::access_clause | Rule::max_access_clause => {
-                for part in inner.into_inner() {
-                    if part.as_rule() == Rule::access_value {
-                        access = Some(parse_access_value(part.as_str()));
-                    }
-                }
-            }
-            Rule::status_clause => {
-                for part in inner.into_inner() {
-                    if part.as_rule() == Rule::status_value {
-                        status = Some(parse_status_value(part.as_str()));
-                    }
-                }
-            }
-            Rule::description_clause => {
-                for part in inner.into_inner() {
-                    if part.as_rule() == Rule::quoted_string {
-                        description = Some(parse_quoted_string(part.as_str()));
-                    }
-                }
-            }
-            Rule::index_clause => {
-                let mut indices = Vec::new();
-                for part in inner.into_inner() {
-                    if part.as_rule() == Rule::index_entry {
-                        for idx_part in part.into_inner() {
-                            if idx_part.as_rule() == Rule::identifier {
-                                indices.push(idx_part.as_str().to_string());
-                            }
-                        }
-                    }
-                }
-                if !indices.is_empty() {
-                    index_clause = Some(indices);
-                }
-            }
-            Rule::defval_clause => {
-                for part in inner.into_inner() {
-                    if part.as_rule() == Rule::defval_value {
-                        defval = Some(part.as_str().trim().to_string());
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Some(MibObject {
-        name: obj_name,
-        oid: Oid::new(Vec::new()), // resolved later
-        module: module_name.to_string(),
-        source_file: String::new(),
-        syntax,
-        access,
-        status,
-        description,
-        index_clause,
-        defval,
-    })
-}
-
-fn parse_object_identity(
-    pair: pest::iterators::Pair<Rule>,
-    module_name: &str,
-) -> Option<MibObject> {
-    let mut obj_name = String::new();
-    let mut status = None;
-    let mut description = None;
-
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::identifier => {
-                if obj_name.is_empty() {
-                    obj_name = inner.as_str().to_string();
-                }
-            }
-            Rule::status_clause => {
-                for part in inner.into_inner() {
-                    if part.as_rule() == Rule::status_value {
-                        status = Some(parse_status_value(part.as_str()));
-                    }
-                }
-            }
-            Rule::description_clause => {
-                for part in inner.into_inner() {
-                    if part.as_rule() == Rule::quoted_string {
-                        description = Some(parse_quoted_string(part.as_str()));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Some(MibObject {
-        name: obj_name,
-        oid: Oid::new(Vec::new()),
-        module: module_name.to_string(),
-        source_file: String::new(),
-        syntax: None,
-        access: None,
-        status,
-        description,
-        index_clause: None,
-        defval: None,
-    })
-}
-
 fn parse_textual_convention(
     pair: pest::iterators::Pair<Rule>,
     module_name: &str,
@@ -639,94 +328,6 @@ fn parse_textual_convention(
         module: module_name.to_string(),
         source_file: String::new(),
         syntax,
-        access: None,
-        status,
-        description,
-        index_clause: None,
-        defval: None,
-    })
-}
-
-fn parse_oid_assignment(
-    pair: pest::iterators::Pair<Rule>,
-    module_name: &str,
-    objects: &mut Vec<MibObject>,
-) -> Option<(String, Vec<OidComponent>)> {
-    let mut obj_name = String::new();
-    let mut raw_oid = None;
-
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::identifier => {
-                if obj_name.is_empty() {
-                    obj_name = inner.as_str().to_string();
-                }
-            }
-            Rule::oid_value => {
-                raw_oid = Some(parse_oid_value(inner));
-            }
-            _ => {}
-        }
-    }
-
-    let raw = raw_oid?;
-    let components = raw.components.clone();
-
-    objects.push(MibObject {
-        name: obj_name.clone(),
-        oid: Oid::new(Vec::new()), // resolved later
-        module: module_name.to_string(),
-        source_file: String::new(),
-        syntax: None,
-        access: None,
-        status: None,
-        description: None,
-        index_clause: None,
-        defval: None,
-    });
-
-    Some((obj_name, components))
-}
-
-fn parse_generic_def_with_oid(
-    pair: pest::iterators::Pair<Rule>,
-    module_name: &str,
-) -> Option<MibObject> {
-    let mut obj_name = String::new();
-    let mut status = None;
-    let mut description = None;
-
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::identifier => {
-                if obj_name.is_empty() {
-                    obj_name = inner.as_str().to_string();
-                }
-            }
-            Rule::status_clause => {
-                for part in inner.into_inner() {
-                    if part.as_rule() == Rule::status_value {
-                        status = Some(parse_status_value(part.as_str()));
-                    }
-                }
-            }
-            Rule::description_clause => {
-                for part in inner.into_inner() {
-                    if part.as_rule() == Rule::quoted_string {
-                        description = Some(parse_quoted_string(part.as_str()));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Some(MibObject {
-        name: obj_name,
-        oid: Oid::new(Vec::new()),
-        module: module_name.to_string(),
-        source_file: String::new(),
-        syntax: None,
         access: None,
         status,
         description,
@@ -802,46 +403,6 @@ pub fn resolve_oid_components(
     } else {
         Some(Oid::new(result))
     }
-}
-
-/// Resolve all OIDs in a set of parsed modules. Returns a map from object name to resolved OID.
-pub fn resolve_all_oids(modules: &[ParsedModule]) -> HashMap<String, Oid> {
-    let mut name_map: HashMap<String, Vec<u32>> = well_known_oids();
-    let mut resolved: HashMap<String, Oid> = HashMap::new();
-
-    // Collect all OID assignments from all modules
-    let mut all_assignments: Vec<(String, Vec<OidComponent>)> = Vec::new();
-    for module in modules {
-        for (name, components) in &module.oid_assignments {
-            all_assignments.push((name.clone(), components.clone()));
-        }
-        // Also add object names from objects that have OID components stored
-        // (they are in oid_assignments already via parse_assignment)
-    }
-
-    // Multi-pass resolution: keep trying until no more progress
-    let mut remaining = all_assignments;
-    for _pass in 0..20 {
-        let mut still_unresolved = Vec::new();
-        let mut made_progress = false;
-
-        for (name, components) in remaining {
-            if let Some(oid) = resolve_oid_components(&components, &name_map) {
-                name_map.insert(name.clone(), oid.components().to_vec());
-                resolved.insert(name, oid);
-                made_progress = true;
-            } else {
-                still_unresolved.push((name, components));
-            }
-        }
-
-        if !made_progress || still_unresolved.is_empty() {
-            break;
-        }
-        remaining = still_unresolved;
-    }
-
-    resolved
 }
 
 /// Store raw OID components alongside objects during parsing.
