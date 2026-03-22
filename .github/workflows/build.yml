@@ -22,51 +22,28 @@ jobs:
           RUST_MIN_STACK: 8388608  # 8MB — snmp2 crate needs deep stack
 
   build:
-    name: Build (${{ matrix.target }})
+    name: Build (linux/amd64)
     needs: check
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            artifact: snmp-tui-linux-amd64
-          - target: aarch64-unknown-linux-musl
-            os: ubuntu-latest
-            artifact: snmp-tui-linux-arm64
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            artifact: snmp-tui-macos-intel
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            artifact: snmp-tui-macos-apple-silicon
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: x86_64-unknown-linux-musl
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: x86_64-unknown-linux-musl
 
       - name: Install musl tools
-        if: contains(matrix.target, 'musl')
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
-      - name: Install cross-compilation tools (aarch64)
-        if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: |
-          sudo apt-get install -y gcc-aarch64-linux-gnu musl-dev
-          sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc /usr/local/bin/aarch64-linux-musl-gcc
-          echo '[target.aarch64-unknown-linux-musl]' >> ~/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
 
       - name: Build release binary
-        run: cargo build --release -p snmp-tui --target ${{ matrix.target }}
+        run: cargo build --release -p snmp-tui --target x86_64-unknown-linux-musl
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: target/${{ matrix.target }}/release/snmp-tui
+          name: snmp-tui-linux-amd64
+          path: target/x86_64-unknown-linux-musl/release/snmp-tui
