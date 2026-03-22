@@ -82,8 +82,8 @@ Standard RFC MIBs (SNMPv2-SMI, SNMPv2-TC, IF-MIB, etc.) are bundled with the app
 | `m` | Open MIB manager |
 | `/` | Search MIB tree by name |
 | `?` | Toggle help overlay |
-| `[` / `]` | Shrink / grow left panel |
-| `Ctrl+K` | Clear results |
+| `[` / `]` | Shrink / grow active panel |
+| `Ctrl+k` | Clear results |
 | `q` | Quit |
 
 ### MIB Tree Panel
