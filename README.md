@@ -11,10 +11,6 @@ An interactive TUI tool for exploring SNMP MIB trees, querying, and configuring 
 - View object details: syntax, access, status, description, OID path
 - Support for SNMP v1, v2c, and v3
 
-## Screenshot
-
-<!-- TODO: Add screenshot -->
-
 ## Installation
 
 ```bash
@@ -36,23 +32,28 @@ snmp-tui
 snmp-tui --mib-dir /usr/share/snmp/mibs
 snmp-tui --mib-file /path/to/MY-MIB.txt
 
-# Connect to a device on startup
-snmp-tui --host 192.168.1.1 --community public --snmp-version 2c
+# Other options
+snmp-tui --timeout 10000 --retries 2 --max-walk-entries 1000 --debug
 ```
+
+Host, community string, and SNMP version are configured via the connection dialog (`c`) or `~/.snmp-tui/config.toml`.
 
 ### Config File
 
-Configuration is stored at `~/.config/snmp-tui/config.toml`:
+Configuration is stored at `~/.snmp-tui/config.toml`:
 
 ```toml
-[mibs]
-directories = ["/usr/share/snmp/mibs"]
-
-[defaults]
-community = "public"
-version = "2c"
-timeout = 5
+mib_dirs = ["/usr/share/snmp/mibs"]
+timeout = 5000
 retries = 1
+
+[[connections]]
+alias = "my-router"
+host = "192.168.1.1"
+port = 161
+version = "v2c"
+read_community = "public"
+write_community = "private"
 ```
 
 ## SNMP Version Support
@@ -61,7 +62,7 @@ retries = 1
 |---------|------|---------|--------|
 | v1 | Community string | None | Supported |
 | v2c | Community string | None | Supported |
-| v3 | USM (MD5/SHA) | DES/AES | Supported |
+| v3 | USM (MD5/SHA/SHA-2xx) | DES/AES | Supported |
 
 ## MIB Loading
 
@@ -78,8 +79,11 @@ Standard RFC MIBs (SNMPv2-SMI, SNMPv2-TC, IF-MIB, etc.) are bundled with the app
 | `Tab` | Cycle focus to next panel |
 | `Shift+Tab` | Cycle focus to previous panel |
 | `c` | Open device connection dialog |
+| `m` | Open MIB manager |
 | `/` | Search MIB tree by name |
 | `?` | Toggle help overlay |
+| `[` / `]` | Shrink / grow left panel |
+| `Ctrl+K` | Clear results |
 | `q` | Quit |
 
 ### MIB Tree Panel
@@ -90,10 +94,13 @@ Standard RFC MIBs (SNMPv2-SMI, SNMPv2-TC, IF-MIB, etc.) are bundled with the app
 | `k` / `↑` | Move selection up |
 | `Enter` / `l` / `→` | Expand node / enter subtree |
 | `h` / `←` | Collapse node / go to parent |
-| `g` | SNMP GET on selected OID |
+| `Space` | SNMP GET on selected OID |
 | `w` | SNMP WALK from selected OID |
 | `n` | SNMP GETNEXT on selected OID |
+| `t` | SNMP table query on selected OID |
 | `s` | SNMP SET on selected OID (opens modal) |
+| `y` | Copy selected OID to clipboard |
+| `r` | Reset tree to root |
 | `G` | Jump to bottom of tree |
 | `gg` | Jump to top of tree |
 
@@ -103,9 +110,13 @@ Standard RFC MIBs (SNMPv2-SMI, SNMPv2-TC, IF-MIB, etc.) are bundled with the app
 |-----|--------|
 | `j` / `↓` | Scroll down |
 | `k` / `↑` | Scroll up |
-| `G` | Jump to latest result (results panel) |
-| `y` | Copy selected result to clipboard (results panel) |
+| `G` | Jump to bottom |
+| `gg` | Jump to top |
+| `/` | Search within panel |
+| `n` / `N` | Next / previous search match |
+| `y` | Copy selected entry to clipboard |
+| `e` | Export results to file (results panel) |
 
 ## License
 
-<!-- TODO: Choose license -->
+This project is licensed under the [MIT License](LICENSE).

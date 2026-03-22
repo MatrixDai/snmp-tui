@@ -132,7 +132,7 @@ Ordered task breakdown for building snmp-tui. Each milestone groups related task
 - [x] **9.4** Color theme and consistent styling across all panels and modals
 - [x] **9.5** Edge case handling: no MIBs loaded (show helpful message), no device connected (disable SNMP keys, show hint), large WALK results (limit or paginate)
 - [ ] **9.6** README screenshot / demo GIF
-- [ ] **9.7** License selection and LICENSE file
+- [x] **9.7** License selection and LICENSE file
 
 ---
 
