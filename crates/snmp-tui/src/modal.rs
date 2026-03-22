@@ -1025,20 +1025,14 @@ impl SearchModal {
     pub fn select_next(&mut self) {
         if !self.results.is_empty() && self.selected + 1 < self.results.len() {
             self.selected += 1;
-            if self.viewport_height > 0
-                && self.selected >= self.scroll_offset + self.viewport_height
-            {
-                self.scroll_offset = self.selected - self.viewport_height + 1;
-            }
+            self.clamp_scroll();
         }
     }
 
     pub fn select_prev(&mut self) {
         if self.selected > 0 {
             self.selected -= 1;
-            if self.selected < self.scroll_offset {
-                self.scroll_offset = self.selected;
-            }
+            self.clamp_scroll();
         }
     }
 
@@ -1050,9 +1044,7 @@ impl SearchModal {
     pub fn jump_bottom(&mut self) {
         if !self.results.is_empty() {
             self.selected = self.results.len() - 1;
-            if self.viewport_height > 0 && self.selected >= self.viewport_height {
-                self.scroll_offset = self.selected - self.viewport_height + 1;
-            }
+            self.clamp_scroll();
         }
     }
 
@@ -1060,11 +1052,8 @@ impl SearchModal {
         if self.results.is_empty() || self.viewport_height == 0 {
             return;
         }
-        let new_selected = (self.selected + self.viewport_height).min(self.results.len() - 1);
-        self.selected = new_selected;
-        if self.selected >= self.scroll_offset + self.viewport_height {
-            self.scroll_offset = self.selected - self.viewport_height + 1;
-        }
+        self.selected = (self.selected + self.viewport_height).min(self.results.len() - 1);
+        self.clamp_scroll();
     }
 
     pub fn page_up(&mut self) {
@@ -1072,8 +1061,18 @@ impl SearchModal {
             return;
         }
         self.selected = self.selected.saturating_sub(self.viewport_height);
+        self.clamp_scroll();
+    }
+
+    /// Ensure `scroll_offset` keeps `selected` visible within the viewport.
+    fn clamp_scroll(&mut self) {
+        if self.viewport_height == 0 {
+            return;
+        }
         if self.selected < self.scroll_offset {
             self.scroll_offset = self.selected;
+        } else if self.selected >= self.scroll_offset + self.viewport_height {
+            self.scroll_offset = self.selected - self.viewport_height + 1;
         }
     }
 
@@ -1092,6 +1091,7 @@ impl SearchModal {
         }
 
         // Iterate all nodes in the tree, matching by name, OID, or description.
+        // Check name first (cheap) before resolving OID (walks up tree).
         for i in 0..tree.node_count() {
             let idx = NodeIndex::from_raw(i);
             let Some(node) = tree.get(idx) else {
@@ -1101,21 +1101,28 @@ impl SearchModal {
                 continue;
             }
 
-            let oid = tree
-                .resolve_oid(idx)
-                .map(|o| o.to_string())
-                .unwrap_or_default();
+            let name_matches = node.name.to_lowercase().contains(&query);
 
-            // Match against name, OID, or description.
-            let matched = node.name.to_lowercase().contains(&query)
-                || oid.contains(&query)
-                || node
+            // Only resolve OID if name didn't match (resolve_oid walks up the tree).
+            let oid_matches = !name_matches
+                && tree
+                    .resolve_oid(idx)
+                    .map(|o| o.to_string())
+                    .is_some_and(|oid| oid.contains(&query));
+
+            let desc_matches = !name_matches
+                && !oid_matches
+                && node
                     .mib_object
                     .as_ref()
                     .and_then(|obj| obj.description.as_ref())
                     .is_some_and(|desc| desc.to_lowercase().contains(&query));
 
-            if matched {
+            if name_matches || oid_matches || desc_matches {
+                let oid = tree
+                    .resolve_oid(idx)
+                    .map(|o| o.to_string())
+                    .unwrap_or_default();
                 self.results.push(SearchResult {
                     node_idx: idx,
                     name: node.name.clone(),
