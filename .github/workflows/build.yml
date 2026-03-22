@@ -31,15 +31,15 @@ jobs:
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             artifact: snmp-tui-linux-amd64
-          # - target: aarch64-unknown-linux-musl
-          #   os: ubuntu-latest
-          #   artifact: snmp-tui-linux-arm64
-          # - target: x86_64-apple-darwin
-          #   os: macos-latest
-          #   artifact: snmp-tui-macos-intel
-          # - target: aarch64-apple-darwin
-          #   os: macos-latest
-          #   artifact: snmp-tui-macos-apple-silicon
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            artifact: snmp-tui-linux-arm64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact: snmp-tui-macos-intel
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: snmp-tui-macos-apple-silicon
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
