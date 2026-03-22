@@ -85,3 +85,67 @@ jobs:
           gh release create "$TAG" \
             --generate-notes \
             artifacts/*.tar.gz
+
+  update-homebrew:
+    name: Update Homebrew Tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Compute checksums and version
+        id: meta
+        run: |
+          INTEL_SHA=$(sha256sum artifacts/snmp-tui-macos-intel.tar.gz | awk '{print $1}')
+          ARM_SHA=$(sha256sum artifacts/snmp-tui-macos-apple-silicon.tar.gz | awk '{print $1}')
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "intel_sha=$INTEL_SHA" >> "$GITHUB_OUTPUT"
+          echo "arm_sha=$ARM_SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Update Homebrew formula
+        env:
+          HOMEBREW_TOKEN: ${{ secrets.HOMEBREW_TOKEN }}
+        run: |
+          git clone https://x-access-token:${HOMEBREW_TOKEN}@github.com/MatrixDai/homebrew-tap.git
+          cd homebrew-tap
+
+          VERSION="${{ steps.meta.outputs.version }}"
+          INTEL_SHA="${{ steps.meta.outputs.intel_sha }}"
+          ARM_SHA="${{ steps.meta.outputs.arm_sha }}"
+
+          python3 - <<'EOF'
+          import re, os
+          version = os.environ['VERSION']
+          intel_sha = os.environ['INTEL_SHA']
+          arm_sha = os.environ['ARM_SHA']
+
+          with open('Formula/snmp-tui.rb') as f:
+              content = f.read()
+
+          content = re.sub(r'version "[^"]+"', f'version "{version}"', content)
+
+          shas = [intel_sha, arm_sha]
+          idx = [0]
+          def replacer(m):
+              i = idx[0]; idx[0] += 1
+              return f'sha256 "{shas[i]}"'
+          content = re.sub(r'sha256 "[a-f0-9]+"', replacer, content)
+
+          with open('Formula/snmp-tui.rb', 'w') as f:
+              f.write(content)
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/snmp-tui.rb
+          git commit -m "Update snmp-tui to ${VERSION}"
+          git push
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          INTEL_SHA: ${{ steps.meta.outputs.intel_sha }}
+          ARM_SHA: ${{ steps.meta.outputs.arm_sha }}
