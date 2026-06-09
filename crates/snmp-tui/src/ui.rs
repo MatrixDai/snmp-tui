@@ -1871,9 +1871,8 @@ fn draw_table_view_modal(frame: &mut Frame, modal: &mut TableViewModal) {
         .title(format!(" {} ", modal.title))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
-    frame.render_widget(block.clone(), popup_area);
-
     let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
 
     // If loading, show loading message
     if modal.loading {
