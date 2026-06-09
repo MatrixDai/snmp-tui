@@ -41,16 +41,19 @@ impl SnmpValue {
     }
 }
 
+/// Format a byte slice as colon-separated lowercase hex (e.g. `de:ad:be:ef`).
+fn format_hex_bytes(bytes: &[u8]) -> String {
+    let hex: Vec<String> = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+    hex.join(":")
+}
+
 impl fmt::Display for SnmpValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SnmpValue::Integer(v) => write!(f, "{}", v),
             SnmpValue::OctetString(bytes) => match std::str::from_utf8(bytes) {
                 Ok(s) => write!(f, "{}", s),
-                Err(_) => {
-                    let hex: Vec<String> = bytes.iter().map(|b| format!("{:02x}", b)).collect();
-                    write!(f, "{}", hex.join(":"))
-                }
+                Err(_) => write!(f, "{}", format_hex_bytes(bytes)),
             },
             SnmpValue::ObjectIdentifier(oid) => write!(f, "{}", oid),
             SnmpValue::IpAddress(addr) => {
@@ -68,10 +71,7 @@ impl fmt::Display for SnmpValue {
                 write!(f, "({}) {}d {}h {}m {}s", v, days, hours, minutes, secs)
             }
             SnmpValue::Counter64(v) => write!(f, "{}", v),
-            SnmpValue::Opaque(bytes) => {
-                let hex: Vec<String> = bytes.iter().map(|b| format!("{:02x}", b)).collect();
-                write!(f, "{}", hex.join(":"))
-            }
+            SnmpValue::Opaque(bytes) => write!(f, "{}", format_hex_bytes(bytes)),
             SnmpValue::Null => write!(f, "NULL"),
             SnmpValue::NoSuchObject => write!(f, "noSuchObject"),
             SnmpValue::NoSuchInstance => write!(f, "noSuchInstance"),

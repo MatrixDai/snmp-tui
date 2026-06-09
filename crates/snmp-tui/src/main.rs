@@ -4,9 +4,10 @@ mod event;
 mod modal;
 mod tree_state;
 mod ui;
+mod util;
 
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Write};
+use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -102,16 +103,6 @@ async fn run(
     Ok(())
 }
 
-fn debug_log_warning(msg: &str) {
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open("/tmp/snmp-tui-debug.log")
-    {
-        let _ = writeln!(f, "[WARN] {}", msg);
-    }
-}
-
 fn load_mibs(config: &config::AppConfig) -> (mib_parser::OidTree, Vec<MibFileEntry>) {
     let bundled_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -193,7 +184,7 @@ fn load_mibs(config: &config::AppConfig) -> (mib_parser::OidTree, Vec<MibFileEnt
 
     for warning in &warnings {
         if config.debug {
-            debug_log_warning(warning);
+            util::debug_log_warning(warning);
         }
     }
 
@@ -266,7 +257,7 @@ fn load_mibs(config: &config::AppConfig) -> (mib_parser::OidTree, Vec<MibFileEnt
         Ok(tree) => tree,
         Err(e) => {
             if config.debug {
-                debug_log_warning(&format!("Failed to build MIB tree: {}", e));
+                util::debug_log_warning(&format!("Failed to build MIB tree: {}", e));
             }
             mib_parser::OidTree::new()
         }

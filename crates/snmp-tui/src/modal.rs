@@ -5,6 +5,7 @@ use ratatui::widgets::TableState;
 use snmp_client::SnmpValue;
 
 use crate::config::ConnectionEntry;
+use crate::util::parse_dotted;
 
 /// Active modal dialog.
 pub enum Modal {
@@ -885,7 +886,7 @@ impl SetModal {
             Some(Syntax::Counter64) => input.parse().ok().map(SnmpValue::Counter64),
             Some(Syntax::TimeTicks) => input.parse().ok().map(SnmpValue::TimeTicks),
             Some(Syntax::IpAddress) => {
-                let parts: Vec<u8> = input.split('.').filter_map(|p| p.parse().ok()).collect();
+                let parts: Vec<u8> = parse_dotted(input);
                 if parts.len() == 4 {
                     Some(SnmpValue::IpAddress([
                         parts[0], parts[1], parts[2], parts[3],
@@ -895,8 +896,7 @@ impl SetModal {
                 }
             }
             Some(Syntax::ObjectIdentifier) => {
-                let components: Vec<u32> =
-                    input.split('.').filter_map(|p| p.parse().ok()).collect();
+                let components: Vec<u32> = parse_dotted(input);
                 if components.is_empty() {
                     None
                 } else {

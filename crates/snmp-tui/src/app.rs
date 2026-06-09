@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::io::Write;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -12,17 +11,7 @@ use crate::modal::{
     ConnectionManagerModal, MibFileEntry, MibFileStatus, MibManagerModal, MibManagerView, Modal,
     SearchModal, SetModal, SetNodeKind, TableColumnSelectModal, TableViewModal,
 };
-
-/// Append a warning message to the debug log file.
-fn debug_log_warning(msg: &str) {
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open("/tmp/snmp-tui-debug.log")
-    {
-        let _ = writeln!(f, "[WARN] {}", msg);
-    }
-}
+use crate::util::debug_log_warning;
 
 /// Actions dispatched from MIB Manager modal that need app-level execution.
 /// Extracted before releasing the modal borrow to avoid borrow conflicts.
@@ -414,6 +403,25 @@ pub enum ConnectionState {
         version: String,
     },
     Error(String),
+}
+
+impl ConnectionState {
+    /// Promote a `Validating` state to `Connected`, reusing the owned fields.
+    /// Any other state is returned unchanged.
+    fn into_connected(self) -> Self {
+        match self {
+            Self::Validating {
+                alias,
+                host,
+                version,
+            } => Self::Connected {
+                alias,
+                host,
+                version,
+            },
+            other => other,
+        }
+    }
 }
 
 impl std::fmt::Display for ConnectionState {
@@ -1285,20 +1293,10 @@ impl App {
             self.pending_validation = false;
             match &response.result {
                 SnmpResult::Value(_, _) => {
-                    if let ConnectionState::Validating {
-                        ref alias,
-                        ref host,
-                        ref version,
-                    } = self.connection
-                    {
-                        let alias = alias.clone();
-                        let host = host.clone();
-                        let version = version.clone();
-                        self.connection = ConnectionState::Connected {
-                            alias,
-                            host,
-                            version,
-                        };
+                    if matches!(self.connection, ConnectionState::Validating { .. }) {
+                        self.connection =
+                            std::mem::replace(&mut self.connection, ConnectionState::Disconnected)
+                                .into_connected();
                         // Save connection to config
                         if let Some(ref entry) = self.pending_connection_entry {
                             config::save_connection(entry);
@@ -1361,18 +1359,11 @@ impl App {
                                 self.inflight_op = Some(OperationType::Get);
                             } else {
                                 // Worker unavailable — fall back to connected without validation
-                                if let ConnectionState::Validating {
-                                    ref alias,
-                                    ref host,
-                                    ref version,
-                                } = self.connection
-                                {
-                                    self.connection = ConnectionState::Connected {
-                                        alias: alias.clone(),
-                                        host: host.clone(),
-                                        version: version.clone(),
-                                    };
-                                }
+                                self.connection = std::mem::replace(
+                                    &mut self.connection,
+                                    ConnectionState::Disconnected,
+                                )
+                                .into_connected();
                             }
                         }
                     }
@@ -1738,7 +1729,7 @@ impl App {
         }
 
         // Parse OID string to Oid
-        let components: Vec<u32> = oid_str.split('.').filter_map(|p| p.parse().ok()).collect();
+        let components: Vec<u32> = crate::util::parse_dotted(&oid_str);
         if components.is_empty() {
             return;
         }
