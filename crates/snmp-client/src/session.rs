@@ -108,8 +108,14 @@ fn to_snmp2_cipher(proto: PrivProtocol) -> snmp2::v3::Cipher {
 /// This is NOT Send/Sync — it must be used within a single thread.
 /// For async use, wrap calls with `tokio::task::spawn_blocking`.
 pub struct SnmpSession {
-    read_session: snmp2::SyncSession,
-    write_session: Option<snmp2::SyncSession>,
+    // Boxed because snmp2::SyncSession embeds an inline `[u8; 65507]` recv_buf
+    // (~64 KB each), so an unboxed SnmpSession is ~128 KB. In debug builds the
+    // compiler does not elide the large by-value temporaries, so constructing a
+    // v1/v2c session (read + write) overflows the default 2 MiB thread stack.
+    // Boxing keeps the buffers on the heap; `new` boxes each session at its
+    // point of construction so only one 64 KB temporary is ever live.
+    read_session: Box<snmp2::SyncSession>,
+    write_session: Option<Box<snmp2::SyncSession>>,
     config: SnmpConfig,
 }
 
@@ -137,37 +143,45 @@ impl SnmpSession {
 
         let (read_session, write_session) = match config.version {
             SnmpVersion::V1 => {
-                let read = snmp2::SyncSession::new_v1(
-                    resolved,
-                    config.read_community.as_bytes(),
-                    Some(timeout),
-                    0,
-                )
-                .map_err(SnmpError::Io)?;
-                let write = snmp2::SyncSession::new_v1(
-                    resolved,
-                    config.write_community.as_bytes(),
-                    Some(timeout),
-                    0,
-                )
-                .map_err(SnmpError::Io)?;
+                let read = Box::new(
+                    snmp2::SyncSession::new_v1(
+                        resolved,
+                        config.read_community.as_bytes(),
+                        Some(timeout),
+                        0,
+                    )
+                    .map_err(SnmpError::Io)?,
+                );
+                let write = Box::new(
+                    snmp2::SyncSession::new_v1(
+                        resolved,
+                        config.write_community.as_bytes(),
+                        Some(timeout),
+                        0,
+                    )
+                    .map_err(SnmpError::Io)?,
+                );
                 (read, Some(write))
             }
             SnmpVersion::V2c => {
-                let read = snmp2::SyncSession::new_v2c(
-                    resolved,
-                    config.read_community.as_bytes(),
-                    Some(timeout),
-                    0,
-                )
-                .map_err(SnmpError::Io)?;
-                let write = snmp2::SyncSession::new_v2c(
-                    resolved,
-                    config.write_community.as_bytes(),
-                    Some(timeout),
-                    0,
-                )
-                .map_err(SnmpError::Io)?;
+                let read = Box::new(
+                    snmp2::SyncSession::new_v2c(
+                        resolved,
+                        config.read_community.as_bytes(),
+                        Some(timeout),
+                        0,
+                    )
+                    .map_err(SnmpError::Io)?,
+                );
+                let write = Box::new(
+                    snmp2::SyncSession::new_v2c(
+                        resolved,
+                        config.write_community.as_bytes(),
+                        Some(timeout),
+                        0,
+                    )
+                    .map_err(SnmpError::Io)?,
+                );
                 (read, Some(write))
             }
             SnmpVersion::V3 => {
@@ -184,7 +198,7 @@ impl SnmpSession {
                 // Initialize v3 session (discovers engine ID)
                 session.init().map_err(SnmpError::from)?;
 
-                (session, None)
+                (Box::new(session), None)
             }
         };
 
